@@ -109,16 +109,8 @@ class PoseDetectionActivity : AppCompatActivity() {
     @Volatile private var heightIsOk       = false
     @Volatile private var confirmationShown = false
     @Volatile private var lastFrameBitmap: Bitmap? = null
-
-    // Time-based hold check — independent of the pose landmarker's actual
-    // frame-processing rate (which can run well below the camera's 30 fps on
-    // heavier devices, making a frame-count target take far longer than expected).
-    private val SUCCESS_HOLD_SECONDS  = 1.5
-    // Brief landmark jitter (a single bad frame near a threshold edge) shouldn't
-    // throw away an otherwise-good streak — only a sustained drop resets it.
-    private val SUCCESS_GRACE_SECONDS = 0.3
-    @Volatile private var allGreenStartSec: Double? = null
-    @Volatile private var lastGoodFrameSec: Double = 0.0
+    private val successCount           = java.util.concurrent.atomic.AtomicInteger(0)
+    private val SUCCESS_FRAMES_NEEDED  = 20
 
     // Light thresholds (same as live_guidence project)
     private val MIN_LUMINANCE = 0.25
@@ -291,7 +283,8 @@ class PoseDetectionActivity : AppCompatActivity() {
                         val captured  = smoothed.toList()
                         val frameCopy = lastFrameBitmap?.copy(Bitmap.Config.ARGB_8888, true)
                         if (frameCopy != null) {
-                            runOnUiThread { showConfirmationOverlay(frameCopy, captured, w, h) }
+                            val blurred = FaceBlurrer.blurFace(frameCopy, captured)
+                            runOnUiThread { showConfirmationOverlay(blurred, captured, w, h) }
                         }
                     }
                 } else {
