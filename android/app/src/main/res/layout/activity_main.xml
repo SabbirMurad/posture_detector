@@ -90,6 +90,25 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent" />
 
+    <!-- Capture sequence cue — visible during POSE phase once the multi-shot
+         capture sequence starts; tells the phone holder what's happening. -->
+    <TextView
+        android:id="@+id/tvCaptureStatus"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:textSize="14sp"
+        android:gravity="center"
+        android:background="#CC1A1A1A"
+        android:paddingHorizontal="18dp"
+        android:paddingVertical="10dp"
+        android:layout_marginTop="8dp"
+        android:layout_marginHorizontal="40dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/tvSideViewStatus"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <!-- Status panel — visible during LIGHT_CHECK and DETECTING phases -->
     <LinearLayout
@@ -195,43 +214,17 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
-    <!-- Confirmation overlay — shown when all conditions are met.
-         Solid background so the live camera is fully hidden. -->
-    <FrameLayout
-        android:id="@+id/confirmationOverlay"
+    <!-- Shutter flash — brief white flash overlay fired on each capture -->
+    <View
+        android:id="@+id/flashOverlay"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:background="#FF121212"
+        android:background="#FFFFFFFF"
+        android:alpha="0"
         android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent">
-
-        <ImageView
-            android:id="@+id/ivConfirmationPhoto"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:layout_marginBottom="96dp"
-            android:scaleType="fitCenter"
-            android:contentDescription="Captured posture photo" />
-
-        <!-- Reuses PoseOverlayView's exact drawing code/sizes/scale math as the
-             live view, so the skeleton renders identically over the still photo. -->
-        <com.ooplab.exercises_fitfuel.PoseOverlayView
-            android:id="@+id/confirmationPoseOverlay"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:layout_marginBottom="96dp" />
-
-        <Button
-            android:id="@+id/btnOkay"
-            android:layout_width="160dp"
-            android:layout_height="wrap_content"
-            android:layout_gravity="bottom|center_horizontal"
-            android:layout_marginBottom="28dp"
-            android:text="Okay" />
-
-    </FrameLayout>
+        app:layout_constraintTop_toTopOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

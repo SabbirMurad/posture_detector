@@ -3,6 +3,7 @@ package com.ooplab.exercises_fitfuel
 import android.app.Activity
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.*
 import android.hardware.camera2.CameraCharacteristics
@@ -32,10 +33,17 @@ import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
 class PoseDetectionActivity : AppCompatActivity() {
+
+    companion object {
+        /** Activity-result extra: ArrayList<String> of absolute paths to the captured JPEGs. */
+        const val EXTRA_PHOTO_PATHS = "photo_paths"
+    }
 
     private enum class AppState { LIGHT_CHECK, DETECTING, POSE }
 
@@ -45,9 +53,8 @@ class PoseDetectionActivity : AppCompatActivity() {
     private lateinit var previewView: PreviewView
     private lateinit var poseOverlayView: PoseOverlayView
     private lateinit var detectionPanel: LinearLayout
-    private lateinit var confirmationOverlay: android.widget.FrameLayout
-    private lateinit var ivConfirmationPhoto: android.widget.ImageView
-    private lateinit var confirmationPoseOverlay: PoseOverlayView
+    private lateinit var tvCaptureStatus: TextView
+    private lateinit var flashOverlay: View
     private lateinit var tvLightStatus: TextView
     private lateinit var tvPersonStatus: TextView
     private lateinit var tvMonitorStatus: TextView
@@ -74,6 +81,7 @@ class PoseDetectionActivity : AppCompatActivity() {
     // Camera
     // -------------------------------------------------------------------------
     private var cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+    @Volatile private var cameraProvider: ProcessCameraProvider? = null
     @Volatile private var lastImageWidth: Int  = 1
     @Volatile private var lastImageHeight: Int = 1
 
@@ -97,6 +105,24 @@ class PoseDetectionActivity : AppCompatActivity() {
     private var confirmationCount = 0
     private val REQUIRED_CONFIRMATIONS = 4
 
+    // ── Multi-shot capture sequence ───────────────────────────────────────────
+    // Once conditions are met, captures TOTAL_SHOTS_NEEDED photos, each at least
+    // CAPTURE_COOLDOWN_MS apart and only while every condition is currently OK.
+    private val capturedPhotos = mutableListOf<Bitmap>()
+    private val TOTAL_SHOTS_NEEDED = 3
+    private val CAPTURE_COOLDOWN_MS = 2000L
+
+    // Reference width the baked-in skeleton's stroke widths / dot radii are tuned
+    // against (see bakeSkeletonOntoPhoto). Using a fixed constant — instead of the
+    // capturing device's screen size — makes the skeleton's proportions relative
+    // to the photo a fixed, intrinsic property of the image itself: the same photo
+    // resolution always bakes the same skeleton, regardless of which phone took
+    // it or what screen it's later viewed on. That matters because these photos
+    // get sent to Flutter and on to the server for storage, where they must look
+    // consistent no matter where they came from or where they're displayed.
+    private val SKELETON_REFERENCE_WIDTH = 1080f
+    @Volatile private var nextCaptureEarliestAtMs = 0L
+
     // Hip spread / torso height ratio threshold for side-view detection.
     // Accepts camera within ~30° of true side view; unaffected by torso lean.
     private val SIDE_VIEW_THRESHOLD = 0.35f
@@ -107,7 +133,6 @@ class PoseDetectionActivity : AppCompatActivity() {
     @Volatile private var rotationIsOk     = false
     @Volatile private var sideIsOk         = false
     @Volatile private var heightIsOk       = false
-    @Volatile private var confirmationShown = false
     @Volatile private var lastFrameBitmap: Bitmap? = null
     private val successCount           = java.util.concurrent.atomic.AtomicInteger(0)
     private val SUCCESS_FRAMES_NEEDED  = 20
@@ -144,14 +169,8 @@ class PoseDetectionActivity : AppCompatActivity() {
         tvRotationStatus      = findViewById(R.id.tvRotationStatus)
         tvDistanceStatus      = findViewById(R.id.tvDistanceStatus)
         tvSideViewStatus      = findViewById(R.id.tvSideViewStatus)
-        confirmationOverlay     = findViewById(R.id.confirmationOverlay)
-        ivConfirmationPhoto     = findViewById(R.id.ivConfirmationPhoto)
-        confirmationPoseOverlay = findViewById(R.id.confirmationPoseOverlay)
-
-        findViewById<Button>(R.id.btnOkay).setOnClickListener {
-            setResult(Activity.RESULT_OK)
-            finish()
-        }
+        tvCaptureStatus         = findViewById(R.id.tvCaptureStatus)
+        flashOverlay            = findViewById(R.id.flashOverlay)
 
         tiltMonitor = TiltMonitor(this) { tiltAngle, rollAngle ->
             val tOk = TiltMonitor.isTiltAcceptable(tiltAngle)
@@ -194,7 +213,8 @@ class PoseDetectionActivity : AppCompatActivity() {
     private fun fullReset() {
         appState = AppState.LIGHT_CHECK
         confirmationCount = 0
-        confirmationShown = false
+        capturedPhotos.clear()
+        nextCaptureEarliestAtMs = 0L
         lastFrameBitmap = null
         successCount.set(0)
         poseLandmarker?.close()
@@ -206,8 +226,9 @@ class PoseDetectionActivity : AppCompatActivity() {
             yoloDetector = YoloDetector(this)
         }
         runOnUiThread {
-            confirmationOverlay.visibility = View.GONE
-            confirmationPoseOverlay.updateLandmarks(emptyList(), 1, 1)
+            tvCaptureStatus.visibility = View.GONE
+            flashOverlay.visibility = View.GONE
+            flashOverlay.alpha = 0f
             poseOverlayView.updateLandmarks(emptyList(), 1, 1)
             poseOverlayView.setHeightGuide(PoseOverlayView.HeightGuideState.HIDDEN)
             updatePanel(lightOk = null)
@@ -276,19 +297,40 @@ class PoseDetectionActivity : AppCompatActivity() {
                     }
                 }
 
-                // ── All-green success trigger ─────────────────────────────────
-                if (currentState == AppState.POSE && sideOk && tiltIsOk && rotationIsOk && heightIsOk) {
-                    if (successCount.incrementAndGet() >= SUCCESS_FRAMES_NEEDED && !confirmationShown) {
-                        confirmationShown = true
+                // ── Multi-shot capture sequence ───────────────────────────────
+                // Captures TOTAL_SHOTS_NEEDED photos: each requires every condition
+                // to hold steady for SUCCESS_FRAMES_NEEDED frames AND at least
+                // CAPTURE_COOLDOWN_MS to have passed since the previous shot. If
+                // conditions drop, the steady-frame count simply resets and we wait
+                // for them to come back — the cooldown clock keeps running regardless.
+                val allOk     = sideOk && tiltIsOk && rotationIsOk && heightIsOk
+                val capturing = currentState == AppState.POSE && capturedPhotos.size < TOTAL_SHOTS_NEEDED
+                if (capturing) runOnUiThread { updateCaptureCue(allOk) }
+
+                if (capturing && allOk) {
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    if (successCount.incrementAndGet() >= SUCCESS_FRAMES_NEEDED && now >= nextCaptureEarliestAtMs) {
+                        successCount.set(0)
                         val captured  = smoothed.toList()
                         val frameCopy = lastFrameBitmap?.copy(Bitmap.Config.ARGB_8888, true)
                         if (frameCopy != null) {
-                            val blurred = FaceBlurrer.blurFace(frameCopy, captured)
-                            runOnUiThread { showConfirmationOverlay(blurred, captured, w, h) }
+                            val blurred  = FaceBlurrer.blurFace(frameCopy, captured)
+                            val photo    = bakeSkeletonOntoPhoto(blurred, captured)
+                            capturedPhotos.add(photo)
+                            nextCaptureEarliestAtMs = now + CAPTURE_COOLDOWN_MS
+                            val shotNumber = capturedPhotos.size
+                            runOnUiThread {
+                                triggerCaptureFlash()
+                                updateCaptureCue(allOk = true)
+                                if (shotNumber >= TOTAL_SHOTS_NEEDED) {
+                                    pauseCameraPipeline()
+                                    finishWithCapturedPhotos(capturedPhotos.toList())
+                                }
+                            }
                         }
                     }
-                } else {
-                    if (!confirmationShown) successCount.set(0)
+                } else if (capturing) {
+                    successCount.set(0)
                 }
 
                 // ── Distance (POSE only) ──────────────────────────────────────
@@ -364,6 +406,7 @@ class PoseDetectionActivity : AppCompatActivity() {
         val future = ProcessCameraProvider.getInstance(this)
         future.addListener({
             val provider = future.get()
+            cameraProvider = provider
             val preview  = Preview.Builder().build().apply { setSurfaceProvider(previewView.surfaceProvider) }
             val analyzer = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -375,6 +418,25 @@ class PoseDetectionActivity : AppCompatActivity() {
                 Log.e("CameraSetup", "Bind failed", e)
             }
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    /**
+     * Stops the camera feed and closes the pose landmarker once all shots are
+     * captured — there's nothing left to detect while the photo review screen
+     * is up, so keep it from burning CPU/battery in the background.
+     *
+     * unbindAll() must run on the main thread (camera lifecycle). The landmarker
+     * close is posted onto cameraExecutor — the same single-thread executor that
+     * calls detectAsync — so it's serialized after any in-flight frame analysis
+     * instead of racing with it (closing while detectAsync is in flight crashes
+     * MediaPipe; this also avoids closing it from inside its own result callback).
+     */
+    private fun pauseCameraPipeline() {
+        cameraProvider?.unbindAll()
+        cameraExecutor.execute {
+            poseLandmarker?.close()
+            poseLandmarker = null
+        }
     }
 
     // =========================================================================
@@ -628,15 +690,97 @@ class PoseDetectionActivity : AppCompatActivity() {
         return BitmapFactory.decodeByteArray(out.toByteArray(), 0, out.size())
     }
 
-    private fun showConfirmationOverlay(
-        photo: Bitmap,
-        landmarks: List<LandmarkPoint>,
-        imgW: Int,
-        imgH: Int,
-    ) {
-        ivConfirmationPhoto.setImageBitmap(photo)
-        confirmationPoseOverlay.updateLandmarks(landmarks, imgW, imgH)
-        confirmationOverlay.visibility = View.VISIBLE
+    /**
+     * Writes the captured photos (skeleton already baked in) to the cache dir as JPEGs
+     * and hands their paths back to MainActivity via the activity result, which forwards
+     * them to Flutter to render on its own review screen — no in-app preview here.
+     */
+    private fun finishWithCapturedPhotos(photos: List<Bitmap>) {
+        val dir = File(cacheDir, "posture_photos").apply { mkdirs() }
+        val paths = ArrayList<String>(photos.size)
+        photos.forEachIndexed { i, bitmap ->
+            val file = File(dir, "photo_${i + 1}.jpg")
+            FileOutputStream(file).use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out) }
+            paths.add(file.absolutePath)
+        }
+        setResult(Activity.RESULT_OK, Intent().putStringArrayListExtra(EXTRA_PHOTO_PATHS, paths))
+        finish()
+    }
+
+    // =========================================================================
+    // Capture sequence — visual cues + skeleton baking
+    // =========================================================================
+
+    /** Draws the pose skeleton directly onto the photo so each still image is self-contained. */
+    private fun bakeSkeletonOntoPhoto(photo: Bitmap, landmarks: List<LandmarkPoint>): Bitmap {
+        val canvas = Canvas(photo)
+        val w = photo.width.toFloat()
+        val h = photo.height.toFloat()
+
+        // The line/dot sizes below are tuned to look right at SKELETON_REFERENCE_WIDTH.
+        // Scaling by (photo width / reference width) makes the skeleton's size a
+        // fixed proportion of the photo's own resolution — a property "baked in"
+        // and intrinsic to the image, not dependent on the capturing device's
+        // screen size. That keeps the result identical across devices and stable
+        // if the camera's capture resolution ever changes.
+        val bakeScale = w / SKELETON_REFERENCE_WIDTH
+
+        val linePaint = Paint().apply {
+            color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 6f * bakeScale; isAntiAlias = true
+        }
+        val estimatedLinePaint = Paint().apply {
+            color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 4f * bakeScale; isAntiAlias = true
+            pathEffect = DashPathEffect(floatArrayOf(14f * bakeScale, 9f * bakeScale), 0f)
+        }
+        val dotPaint = Paint().apply { color = Color.GREEN; style = Paint.Style.FILL; isAntiAlias = true }
+        val estimatedDotPaint = Paint().apply {
+            color = Color.argb(160, 0, 220, 0); style = Paint.Style.FILL; isAntiAlias = true
+        }
+
+        for ((start, end) in PoseOverlayView.POSE_CONNECTIONS) {
+            if (start < landmarks.size && end < landmarks.size) {
+                val s = landmarks[start]
+                val e = landmarks[end]
+                val paint = if (s.estimated || e.estimated) estimatedLinePaint else linePaint
+                canvas.drawLine(s.x * w, s.y * h, e.x * w, e.y * h, paint)
+            }
+        }
+        for (lm in landmarks) {
+            val paint = if (lm.estimated) estimatedDotPaint else dotPaint
+            val radius = (if (lm.estimated) 9f else 12f) * bakeScale
+            canvas.drawCircle(lm.x * w, lm.y * h, radius, paint)
+        }
+        return photo
+    }
+
+    /** Camera-shutter flash — brief white flash so the phone holder feels each shot register. */
+    private fun triggerCaptureFlash() {
+        flashOverlay.visibility = View.VISIBLE
+        flashOverlay.alpha = 1f
+        flashOverlay.animate().alpha(0f).setDuration(350)
+            .withEndAction { flashOverlay.visibility = View.GONE }
+            .start()
+    }
+
+    /** Drives tvCaptureStatus through the multi-shot sequence so the phone holder always
+     *  knows: how many shots are done, whether to hold steady, or to adjust position. */
+    private fun updateCaptureCue(allOk: Boolean) {
+        val done = capturedPhotos.size
+        if (done == 0 && !allOk) {
+            tvCaptureStatus.visibility = View.GONE
+            return
+        }
+        tvCaptureStatus.visibility = View.VISIBLE
+        tvCaptureStatus.text = when {
+            done >= TOTAL_SHOTS_NEEDED ->
+                "✓ All $TOTAL_SHOTS_NEEDED photos captured"
+            android.os.SystemClock.elapsedRealtime() < nextCaptureEarliestAtMs ->
+                "✓ Photo $done of $TOTAL_SHOTS_NEEDED captured — hold your position"
+            allOk ->
+                "Hold steady — capturing photo ${done + 1} of $TOTAL_SHOTS_NEEDED…"
+            else ->
+                "Get into position for photo ${done + 1} of $TOTAL_SHOTS_NEEDED"
+        }
     }
 
     private fun setupEdgeToEdge() {

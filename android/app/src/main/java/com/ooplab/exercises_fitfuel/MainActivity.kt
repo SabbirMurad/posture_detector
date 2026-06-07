@@ -36,7 +36,12 @@ class MainActivity : FlutterActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_CODE) {
-            pendingResult?.success(resultCode == Activity.RESULT_OK)
+            if (resultCode == Activity.RESULT_OK) {
+                val paths = data?.getStringArrayListExtra(PoseDetectionActivity.EXTRA_PHOTO_PATHS)
+                pendingResult?.success(paths)
+            } else {
+                pendingResult?.success(null)
+            }
             pendingResult = null
         }
     }
