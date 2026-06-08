@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:posture_detector/review_screen.dart';
+import 'package:posture_detector/rosa_score.dart';
 
 class StartScreen extends StatefulWidget {
   const StartScreen({super.key});
@@ -16,11 +17,22 @@ class _StartScreenState extends State<StartScreen> {
   Future<void> _onStart() async {
     setState(() => _loading = true);
     try {
-      final photoPaths = await _channel.invokeListMethod<String>('startDetection');
+      final result = await _channel.invokeMethod<Map>('startDetection');
       if (!mounted) return;
-      if (photoPaths != null && photoPaths.isNotEmpty) {
+      if (result == null) return;
+      final photoPaths = List<String>.from(result['photo_paths'] as List? ?? []);
+      final rosaScores = (result['rosa_scores'] as List? ?? [])
+          .map((e) => RosaScore.fromMap(Map<String, dynamic>.from(e as Map)))
+          .toList();
+
+      if (photoPaths.isNotEmpty) {
         Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => ReviewScreen(photoPaths: photoPaths)),
+          MaterialPageRoute(
+            builder: (_) => ReviewScreen(
+              photoPaths: photoPaths,
+              rosaScores: rosaScores,
+            ),
+          ),
         );
       }
     } on PlatformException catch (e) {

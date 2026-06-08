@@ -42,7 +42,9 @@ class PoseDetectionActivity : AppCompatActivity() {
 
     companion object {
         /** Activity-result extra: ArrayList<String> of absolute paths to the captured JPEGs. */
-        const val EXTRA_PHOTO_PATHS = "photo_paths"
+        const val EXTRA_PHOTO_PATHS  = "photo_paths"
+        /** Activity-result extra: JSON array string of ROSA score maps, one per photo. */
+        const val EXTRA_ROSA_SCORES  = "rosa_scores"
     }
 
     private enum class AppState { LIGHT_CHECK, DETECTING, POSE }
@@ -109,6 +111,7 @@ class PoseDetectionActivity : AppCompatActivity() {
     // Once conditions are met, captures TOTAL_SHOTS_NEEDED photos, each at least
     // CAPTURE_COOLDOWN_MS apart and only while every condition is currently OK.
     private val capturedPhotos = mutableListOf<Bitmap>()
+    private val capturedScores = mutableListOf<RosaScorer.Result?>()
     private val TOTAL_SHOTS_NEEDED = 3
     private val CAPTURE_COOLDOWN_MS = 2000L
 
@@ -215,6 +218,7 @@ class PoseDetectionActivity : AppCompatActivity() {
         appState = AppState.LIGHT_CHECK
         confirmationCount = 0
         capturedPhotos.clear()
+        capturedScores.clear()
         nextCaptureEarliestAtMs = 0L
         lastFrameBitmap = null
         successCount.set(0)
@@ -318,8 +322,10 @@ class PoseDetectionActivity : AppCompatActivity() {
                         val frameCopy = lastFrameBitmap?.copy(Bitmap.Config.ARGB_8888, true)
                         if (frameCopy != null) {
                             val blurred  = FaceBlurrer.blurFace(frameCopy, captured)
-                            val photo    = bakeSkeletonOntoPhoto(blurred, captured, RosaAnglesCalculator.compute(captured))
+                            val angles   = RosaAnglesCalculator.compute(captured)
+                            val photo    = bakeSkeletonOntoPhoto(blurred, captured, angles)
                             capturedPhotos.add(photo)
+                            capturedScores.add(if (angles != null) RosaScorer.score(angles) else null)
                             nextCaptureEarliestAtMs = now + CAPTURE_COOLDOWN_MS
                             val shotNumber = capturedPhotos.size
                             runOnUiThread {
@@ -327,7 +333,7 @@ class PoseDetectionActivity : AppCompatActivity() {
                                 updateCaptureCue(allOk = true)
                                 if (shotNumber >= TOTAL_SHOTS_NEEDED) {
                                     pauseCameraPipeline()
-                                    finishWithCapturedPhotos(capturedPhotos.toList())
+                                    finishWithCapturedPhotos(capturedPhotos.toList(), capturedScores.toList())
                                 }
                             }
                         }
@@ -707,11 +713,11 @@ class PoseDetectionActivity : AppCompatActivity() {
     }
 
     /**
-     * Writes the captured photos (skeleton already baked in) to the cache dir as JPEGs
-     * and hands their paths back to MainActivity via the activity result, which forwards
-     * them to Flutter to render on its own review screen — no in-app preview here.
+     * Writes the captured photos (skeleton already baked in) to the cache dir as JPEGs,
+     * serialises the ROSA scores to JSON, and hands both back to MainActivity via the
+     * activity result for Flutter to render on the review screen.
      */
-    private fun finishWithCapturedPhotos(photos: List<Bitmap>) {
+    private fun finishWithCapturedPhotos(photos: List<Bitmap>, scores: List<RosaScorer.Result?>) {
         val dir = File(cacheDir, "posture_photos").apply { mkdirs() }
         val paths = ArrayList<String>(photos.size)
         photos.forEachIndexed { i, bitmap ->
@@ -719,7 +725,14 @@ class PoseDetectionActivity : AppCompatActivity() {
             FileOutputStream(file).use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out) }
             paths.add(file.absolutePath)
         }
-        setResult(Activity.RESULT_OK, Intent().putStringArrayListExtra(EXTRA_PHOTO_PATHS, paths))
+        val scoresJson = org.json.JSONArray().also { arr ->
+            scores.forEach { r ->
+                arr.put(if (r != null) org.json.JSONObject(r.toMap()) else org.json.JSONObject())
+            }
+        }.toString()
+        setResult(Activity.RESULT_OK, Intent()
+            .putStringArrayListExtra(EXTRA_PHOTO_PATHS, paths)
+            .putExtra(EXTRA_ROSA_SCORES, scoresJson))
         finish()
     }
 

@@ -36,9 +36,31 @@ class MainActivity : FlutterActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_CODE) {
-            if (resultCode == Activity.RESULT_OK) {
-                val paths = data?.getStringArrayListExtra(PoseDetectionActivity.EXTRA_PHOTO_PATHS)
-                pendingResult?.success(paths)
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                val paths      = data.getStringArrayListExtra(PoseDetectionActivity.EXTRA_PHOTO_PATHS)
+                val scoresJson = data.getStringExtra(PoseDetectionActivity.EXTRA_ROSA_SCORES)
+                val scores = if (!scoresJson.isNullOrEmpty()) {
+                    val arr = org.json.JSONArray(scoresJson)
+                    (0 until arr.length()).map { i ->
+                        val obj = arr.getJSONObject(i)
+                        hashMapOf<String, Any>(
+                            "final_score"       to obj.optInt("finalScore", 0),
+                            "risk_level"        to obj.optString("riskLevel", "Unknown"),
+                            "chair_score"       to obj.optInt("chairScore", 0),
+                            "peripheral_score"  to obj.optInt("peripheralScore", 0),
+                            "seat_height_score" to obj.optInt("seatHeightScore", 0),
+                            "backrest_score"    to obj.optInt("backrestScore", 0),
+                            "armrest_score"     to obj.optInt("armrestScore", 0),
+                            "monitor_score"     to obj.optInt("monitorScore", 0),
+                            "keyboard_score"    to obj.optInt("keyboardScore", 0),
+                            "mouse_score"       to obj.optInt("mouseScore", 0),
+                        )
+                    }
+                } else emptyList<Map<String, Any>>()
+                pendingResult?.success(hashMapOf(
+                    "photo_paths"  to (paths ?: arrayListOf<String>()),
+                    "rosa_scores"  to scores,
+                ))
             } else {
                 pendingResult?.success(null)
             }
