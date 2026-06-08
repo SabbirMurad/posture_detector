@@ -22,6 +22,14 @@ android {
         }
     }
 
+    androidResources {
+        // MediaPipe and TFLite open model files via AssetFileDescriptor, which
+        // requires the file to be stored uncompressed in the APK. The default
+        // packager compresses everything, causing a silent runtime crash in
+        // release builds (flutter run bypasses this by deploying assets separately).
+        noCompress += listOf("tflite", "task")
+    }
+
     defaultConfig {
         applicationId = "com.example.posture_detector"
         minSdk = 30
