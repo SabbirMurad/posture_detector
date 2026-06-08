@@ -133,6 +133,7 @@ class PoseDetectionActivity : AppCompatActivity() {
     @Volatile private var rotationIsOk     = false
     @Volatile private var sideIsOk         = false
     @Volatile private var heightIsOk       = false
+    @Volatile private var distanceIsOk     = false
     @Volatile private var lastFrameBitmap: Bitmap? = null
     private val successCount           = java.util.concurrent.atomic.AtomicInteger(0)
     private val SUCCESS_FRAMES_NEEDED  = 20
@@ -217,6 +218,7 @@ class PoseDetectionActivity : AppCompatActivity() {
         nextCaptureEarliestAtMs = 0L
         lastFrameBitmap = null
         successCount.set(0)
+        distanceIsOk = false
         poseLandmarker?.close()
         poseLandmarker = null
         landmarkSmoother.reset()
@@ -232,6 +234,7 @@ class PoseDetectionActivity : AppCompatActivity() {
             poseOverlayView.updateLandmarks(emptyList(), 1, 1)
             poseOverlayView.setHeightGuide(PoseOverlayView.HeightGuideState.HIDDEN)
             updatePanel(lightOk = null)
+            poseOverlayView.updateRosaAngles(null)
         }
     }
 
@@ -278,7 +281,7 @@ class PoseDetectionActivity : AppCompatActivity() {
                     val guideState: PoseOverlayView.HeightGuideState
                     if (tiltIsOk && rotationIsOk) {
                         val shoulderY = if (smoothed.size >= 13) (smoothed[11].y + smoothed[12].y) / 2f else -1f
-                        val hOk = shoulderY in 0.40f..0.48f
+                        val hOk = shoulderY in 0.43f..0.57f
                         heightIsOk = hOk
                         guideState = when {
                             shoulderY < 0f    -> PoseOverlayView.HeightGuideState.HIDDEN
@@ -303,7 +306,7 @@ class PoseDetectionActivity : AppCompatActivity() {
                 // CAPTURE_COOLDOWN_MS to have passed since the previous shot. If
                 // conditions drop, the steady-frame count simply resets and we wait
                 // for them to come back — the cooldown clock keeps running regardless.
-                val allOk     = sideOk && tiltIsOk && rotationIsOk && heightIsOk
+                val allOk     = sideOk && tiltIsOk && rotationIsOk && heightIsOk && distanceIsOk
                 val capturing = currentState == AppState.POSE && capturedPhotos.size < TOTAL_SHOTS_NEEDED
                 if (capturing) runOnUiThread { updateCaptureCue(allOk) }
 
@@ -315,7 +318,7 @@ class PoseDetectionActivity : AppCompatActivity() {
                         val frameCopy = lastFrameBitmap?.copy(Bitmap.Config.ARGB_8888, true)
                         if (frameCopy != null) {
                             val blurred  = FaceBlurrer.blurFace(frameCopy, captured)
-                            val photo    = bakeSkeletonOntoPhoto(blurred, captured)
+                            val photo    = bakeSkeletonOntoPhoto(blurred, captured, RosaAnglesCalculator.compute(captured))
                             capturedPhotos.add(photo)
                             nextCaptureEarliestAtMs = now + CAPTURE_COOLDOWN_MS
                             val shotNumber = capturedPhotos.size
@@ -346,14 +349,27 @@ class PoseDetectionActivity : AppCompatActivity() {
                     )
                 } else null
 
+                val rosaAngles = if (currentState == AppState.POSE && smoothed.size >= 29)
+                    RosaAnglesCalculator.compute(smoothed) else null
+
+                distanceIsOk = distanceM != null && distanceM in 1.7f..2.1f
+
                 runOnUiThread {
                     poseOverlayView.updateLandmarks(smoothed, w, h)
+                    poseOverlayView.updateRosaAngles(rosaAngles)
                     if (distanceM != null) {
-                        tvDistanceStatus.text = "● Distance  ${"%.2f".format(distanceM)}m"
-                        tvDistanceStatus.setTextColor(Color.WHITE)
+                        val dOk = distanceM in 1.7f..2.1f
+                        val hint = when {
+                            distanceM < 1.7f -> "  ·  Move back"
+                            distanceM > 2.1f -> "  ·  Move closer"
+                            else             -> ""
+                        }
+                        tvDistanceStatus.text = "● Distance  ${"%.2f".format(distanceM)}m$hint"
+                        tvDistanceStatus.setTextColor(if (dOk) COLOR_DETECTED else COLOR_NOT_DETECTED)
                     } else {
+                        distanceIsOk = false
                         tvDistanceStatus.text = "● Distance  --"
-                        tvDistanceStatus.setTextColor(Color.parseColor("#9E9E9E"))
+                        tvDistanceStatus.setTextColor(COLOR_NEUTRAL)
                     }
                 }
             }.build()
@@ -711,8 +727,12 @@ class PoseDetectionActivity : AppCompatActivity() {
     // Capture sequence — visual cues + skeleton baking
     // =========================================================================
 
-    /** Draws the pose skeleton directly onto the photo so each still image is self-contained. */
-    private fun bakeSkeletonOntoPhoto(photo: Bitmap, landmarks: List<LandmarkPoint>): Bitmap {
+    /** Draws the pose skeleton and ROSA angle arcs onto the photo so each still image is self-contained. */
+    private fun bakeSkeletonOntoPhoto(
+        photo: Bitmap,
+        landmarks: List<LandmarkPoint>,
+        angles: RosaAnglesCalculator.Angles?,
+    ): Bitmap {
         val canvas = Canvas(photo)
         val w = photo.width.toFloat()
         val h = photo.height.toFloat()
@@ -747,9 +767,29 @@ class PoseDetectionActivity : AppCompatActivity() {
         }
         for (lm in landmarks) {
             val paint = if (lm.estimated) estimatedDotPaint else dotPaint
-            val radius = (if (lm.estimated) 9f else 12f) * bakeScale
+            val radius = (if (lm.estimated) 5f else 7f) * bakeScale
             canvas.drawCircle(lm.x * w, lm.y * h, radius, paint)
         }
+
+        if (angles != null) {
+            val arcPaint = Paint().apply {
+                color = Color.parseColor("#FF5722"); style = Paint.Style.STROKE
+                strokeWidth = 4f * bakeScale; isAntiAlias = true
+            }
+            val vertRefPaint = Paint().apply {
+                color = Color.argb(200, 255, 87, 34); style = Paint.Style.STROKE
+                strokeWidth = 3f * bakeScale; isAntiAlias = true
+                pathEffect = DashPathEffect(floatArrayOf(12f * bakeScale, 8f * bakeScale), 0f)
+            }
+            val labelPaint = Paint().apply {
+                color = Color.parseColor("#FF5722"); textSize = 36f * bakeScale; isAntiAlias = true
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                textAlign = Paint.Align.CENTER
+            }
+            PoseOverlayView.drawAngles(canvas, landmarks, angles, { x -> x * w }, { y -> y * h },
+                arcPaint, vertRefPaint, labelPaint)
+        }
+
         return photo
     }
 

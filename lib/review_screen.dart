@@ -1,19 +1,11 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:posture_detector/image_viewer.dart';
 import 'package:posture_detector/success_screen.dart';
 
 class ReviewScreen extends StatelessWidget {
   final List<String> photoPaths;
   const ReviewScreen({super.key, required this.photoPaths});
-
-  void _openFullScreen(BuildContext context, String path) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        fullscreenDialog: true,
-        builder: (_) => _FullScreenPhotoScreen(path: path),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -52,11 +44,28 @@ class ReviewScreen extends StatelessWidget {
                 child: Wrap(
                   spacing: 12,
                   runSpacing: 12,
-                  children: photoPaths.map((path) {
+                  children: photoPaths.asMap().entries.map((entry) {
+                    final int index = entry.key;
+                    final String path = entry.value;
+
                     return ClipRRect(
                       borderRadius: BorderRadius.circular(8),
                       child: InkWell(
-                        onTap: () => _openFullScreen(context, path),
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) {
+                                return GalleryImageViewer(
+                                  images: photoPaths
+                                      .map((p) => FileImage(File(p)))
+                                      .toList(),
+                                  initial_index: index,
+                                  show_counter: true,
+                                );
+                              },
+                            ),
+                          );
+                        },
                         child: Image.file(
                           File(path),
                           width: tileWidth,
@@ -82,26 +91,6 @@ class ReviewScreen extends StatelessWidget {
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FullScreenPhotoScreen extends StatelessWidget {
-  final String path;
-  const _FullScreenPhotoScreen({required this.path});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: () => Navigator.of(context).pop(),
-      child: Scaffold(
-        backgroundColor: Colors.white,
-        body: SafeArea(
-          child: Center(
-            child: Image.file(File(path), fit: BoxFit.contain),
-          ),
         ),
       ),
     );
