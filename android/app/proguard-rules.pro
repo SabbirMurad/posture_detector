@@ -12,25 +12,31 @@
 -dontwarn org.tensorflow.lite.gpu.GpuDelegateFactory$Options
 
 # ── MediaPipe Tasks ────────────────────────────────────────────────────────────
-# MediaPipe loads task runners, calculators, and JNI bridges by reflected class
-# name at runtime. Stripping any of these causes a silent crash the moment the
-# PoseLandmarker is initialised in release builds.
 -keep class com.google.mediapipe.** { *; }
 -keep interface com.google.mediapipe.** { *; }
+-keep enum com.google.mediapipe.** { *; }
 -keepclassmembers class com.google.mediapipe.** { *; }
-# Proto classes referenced by framework internals but not shipped in tasks-vision AAR
+-keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod
 -dontwarn com.google.mediapipe.**
 
-# Protocol Buffers — MediaPipe model options are deserialised via proto reflection
+# Protocol Buffers
 -keep class com.google.protobuf.** { *; }
 -keep interface com.google.protobuf.** { *; }
+-keep enum com.google.protobuf.** { *; }
 -keepclassmembers class com.google.protobuf.** { *; }
 -dontwarn com.google.protobuf.**
 
 # ── TensorFlow Lite ────────────────────────────────────────────────────────────
-# Used by both YOLO (direct) and MediaPipe (internally). JNI delegates resolve
-# interpreter and delegate classes by name.
--keep class org.tensorflow.lite.** { *; }
--keep interface org.tensorflow.lite.** { *; }
--keepclassmembers class org.tensorflow.lite.** { *; }
--dontwarn org.tensorflow.lite.**
+-keep class org.tensorflow.** { *; }
+-keep interface org.tensorflow.** { *; }
+-keep enum org.tensorflow.** { *; }
+-keepclassmembers class org.tensorflow.** { *; }
+-dontwarn org.tensorflow.**
+
+# ── Guava — used internally by MediaPipe ──────────────────────────────────────
+-keep class com.google.common.** { *; }
+-dontwarn com.google.common.**
+
+# ── AutoValue — generated option classes used by MediaPipe Tasks ──────────────
+-keep class * extends com.google.auto.value.AutoValue { *; }
+-dontwarn com.google.auto.**
