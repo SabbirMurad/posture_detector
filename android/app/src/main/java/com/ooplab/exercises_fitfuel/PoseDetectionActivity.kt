@@ -399,19 +399,37 @@ class PoseDetectionActivity : AppCompatActivity() {
         }
     }
 
-    /** Logs, toasts, and writes the crash to a file readable from Flutter. */
+    /** Logs the crash, writes it to a file, and shows a scrollable AlertDialog. */
     private fun reportCrash(tag: String, e: Throwable) {
-        val msg = "[posture/$tag] ${e.javaClass.name}: ${e.message}"
-        Log.e("PoseDetection", msg, e)
         val full = buildString {
-            appendLine(msg)
-            e.stackTrace.take(12).forEach { appendLine("  at $it") }
+            appendLine("[posture/$tag]")
+            appendLine("${e.javaClass.name}: ${e.message}")
+            appendLine()
+            e.stackTrace.forEach { appendLine("  at $it") }
+            var cause = e.cause
+            while (cause != null) {
+                appendLine()
+                appendLine("Caused by: ${cause.javaClass.name}: ${cause.message}")
+                cause.stackTrace.take(8).forEach { appendLine("  at $it") }
+                cause = cause.cause
+            }
         }
+        Log.e("PoseDetection", full)
         try { File(filesDir, "last_crash.txt").writeText(full) } catch (_: Exception) {}
         runOnUiThread {
-            Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
-            tvStatusMessage.visibility = android.view.View.VISIBLE
-            tvStatusMessage.text = "Error: ${e.javaClass.simpleName} — see last_crash.txt"
+            val tv = android.widget.TextView(this).apply {
+                text = full
+                textSize = 11f
+                setTextIsSelectable(true)
+                setPadding(48, 24, 48, 24)
+            }
+            val scroll = android.widget.ScrollView(this).apply { addView(tv) }
+            android.app.AlertDialog.Builder(this)
+                .setTitle("Crash — tap & hold to copy")
+                .setView(scroll)
+                .setCancelable(false)
+                .setPositiveButton("Back to app") { _, _ -> finish() }
+                .show()
         }
     }
 
