@@ -20,23 +20,10 @@ class _StartScreenState extends State<StartScreen> {
       final result = await _channel.invokeMethod<Map>('startDetection');
       if (!mounted) return;
       if (result == null) return;
-      final crashLog   = result['crash_log'] as String? ?? '';
       final photoPaths = List<String>.from(result['photo_paths'] as List? ?? []);
       final rosaScores = (result['rosa_scores'] as List? ?? [])
           .map((e) => RosaScore.fromMap(Map<String, dynamic>.from(e as Map)))
           .toList();
-
-      if (crashLog.isNotEmpty) {
-        showDialog(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('Crash log'),
-            content: SingleChildScrollView(child: SelectableText(crashLog, style: const TextStyle(fontSize: 11))),
-            actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
-          ),
-        );
-        return;
-      }
 
       if (photoPaths.isNotEmpty) {
         Navigator.of(context).push(

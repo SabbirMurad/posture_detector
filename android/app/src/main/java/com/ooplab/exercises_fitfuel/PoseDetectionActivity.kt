@@ -161,13 +161,6 @@ class PoseDetectionActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         setupEdgeToEdge()
 
-        // Catch any uncaught exception on any thread and write it before the process dies
-        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
-        Thread.setDefaultUncaughtExceptionHandler { t, e ->
-            reportCrash("uncaught/${t.name}", e)
-            defaultHandler?.uncaughtException(t, e)
-        }
-
         previewView      = findViewById(R.id.previewCam)
         poseOverlayView  = findViewById(R.id.poseOverlay)
         detectionPanel   = findViewById(R.id.detectionPanel)
@@ -254,9 +247,7 @@ class PoseDetectionActivity : AppCompatActivity() {
     // =========================================================================
 
     private fun initializePoseLandmarker() {
-        val options: PoseLandmarker.PoseLandmarkerOptions
-        try {
-            options = PoseLandmarker.PoseLandmarkerOptions.builder()
+        val options = PoseLandmarker.PoseLandmarkerOptions.builder()
                 .setBaseOptions(
                     BaseOptions.builder().setModelAssetPath("pose_landmarker_full.task").build()
                 )
@@ -388,49 +379,8 @@ class PoseDetectionActivity : AppCompatActivity() {
                     }
                 }
             }.build()
-        } catch (e: Throwable) {
-            reportCrash("options_build", e); return
-        }
 
-        try {
-            poseLandmarker = PoseLandmarker.createFromOptions(this, options)
-        } catch (e: Throwable) {
-            reportCrash("create_from_options", e)
-        }
-    }
-
-    /** Logs the crash, writes it to a file, and shows a scrollable AlertDialog. */
-    private fun reportCrash(tag: String, e: Throwable) {
-        val full = buildString {
-            appendLine("[posture/$tag]")
-            appendLine("${e.javaClass.name}: ${e.message}")
-            appendLine()
-            e.stackTrace.forEach { appendLine("  at $it") }
-            var cause = e.cause
-            while (cause != null) {
-                appendLine()
-                appendLine("Caused by: ${cause.javaClass.name}: ${cause.message}")
-                cause.stackTrace.take(8).forEach { appendLine("  at $it") }
-                cause = cause.cause
-            }
-        }
-        Log.e("PoseDetection", full)
-        try { File(filesDir, "last_crash.txt").writeText(full) } catch (_: Exception) {}
-        runOnUiThread {
-            val tv = android.widget.TextView(this).apply {
-                text = full
-                textSize = 11f
-                setTextIsSelectable(true)
-                setPadding(48, 24, 48, 24)
-            }
-            val scroll = android.widget.ScrollView(this).apply { addView(tv) }
-            android.app.AlertDialog.Builder(this)
-                .setTitle("Crash — tap & hold to copy")
-                .setView(scroll)
-                .setCancelable(false)
-                .setPositiveButton("Back to app") { _, _ -> finish() }
-                .show()
-        }
+        poseLandmarker = PoseLandmarker.createFromOptions(this, options)
     }
 
     // =========================================================================
