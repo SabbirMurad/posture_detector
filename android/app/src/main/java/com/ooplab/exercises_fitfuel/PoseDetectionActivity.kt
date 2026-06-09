@@ -161,6 +161,13 @@ class PoseDetectionActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         setupEdgeToEdge()
 
+        // Catch any uncaught exception on any thread and write it before the process dies
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            reportCrash("uncaught/${t.name}", e)
+            defaultHandler?.uncaughtException(t, e)
+        }
+
         previewView      = findViewById(R.id.previewCam)
         poseOverlayView  = findViewById(R.id.poseOverlay)
         detectionPanel   = findViewById(R.id.detectionPanel)
@@ -247,12 +254,14 @@ class PoseDetectionActivity : AppCompatActivity() {
     // =========================================================================
 
     private fun initializePoseLandmarker() {
-        val options = PoseLandmarker.PoseLandmarkerOptions.builder()
-            .setBaseOptions(
-                BaseOptions.builder().setModelAssetPath("pose_landmarker_full.task").build()
-            )
-            .setRunningMode(RunningMode.LIVE_STREAM)
-            .setResultListener { result, _ ->
+        val options: PoseLandmarker.PoseLandmarkerOptions
+        try {
+            options = PoseLandmarker.PoseLandmarkerOptions.builder()
+                .setBaseOptions(
+                    BaseOptions.builder().setModelAssetPath("pose_landmarker_full.task").build()
+                )
+                .setRunningMode(RunningMode.LIVE_STREAM)
+                .setResultListener { result, _ ->
                 val currentState = appState
                 val landmarks = result.landmarks()
                 val w = lastImageWidth
@@ -379,8 +388,31 @@ class PoseDetectionActivity : AppCompatActivity() {
                     }
                 }
             }.build()
+        } catch (e: Throwable) {
+            reportCrash("options_build", e); return
+        }
 
-        poseLandmarker = PoseLandmarker.createFromOptions(this, options)
+        try {
+            poseLandmarker = PoseLandmarker.createFromOptions(this, options)
+        } catch (e: Throwable) {
+            reportCrash("create_from_options", e)
+        }
+    }
+
+    /** Logs, toasts, and writes the crash to a file readable from Flutter. */
+    private fun reportCrash(tag: String, e: Throwable) {
+        val msg = "[posture/$tag] ${e.javaClass.name}: ${e.message}"
+        Log.e("PoseDetection", msg, e)
+        val full = buildString {
+            appendLine(msg)
+            e.stackTrace.take(12).forEach { appendLine("  at $it") }
+        }
+        try { File(filesDir, "last_crash.txt").writeText(full) } catch (_: Exception) {}
+        runOnUiThread {
+            Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+            tvStatusMessage.visibility = android.view.View.VISIBLE
+            tvStatusMessage.text = "Error: ${e.javaClass.simpleName} — see last_crash.txt"
+        }
     }
 
     // =========================================================================

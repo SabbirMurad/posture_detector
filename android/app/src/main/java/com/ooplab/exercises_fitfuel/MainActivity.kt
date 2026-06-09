@@ -57,9 +57,18 @@ class MainActivity : FlutterActivity() {
                         )
                     }
                 } else emptyList<Map<String, Any>>()
+                // Surface any crash log written by PoseDetectionActivity
+                val crashFile = java.io.File(filesDir, "last_crash.txt")
+                val crashLog  = if (crashFile.exists()) {
+                    val text = crashFile.readText()
+                    crashFile.delete()
+                    text
+                } else null
+
                 pendingResult?.success(hashMapOf(
                     "photo_paths"  to (paths ?: arrayListOf<String>()),
                     "rosa_scores"  to scores,
+                    "crash_log"    to (crashLog ?: ""),
                 ))
             } else {
                 pendingResult?.success(null)
