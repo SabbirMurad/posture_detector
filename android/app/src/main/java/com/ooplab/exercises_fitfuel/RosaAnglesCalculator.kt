@@ -27,6 +27,7 @@ object RosaAnglesCalculator {
         val kneeAngle: Float,       // degrees — seat height
         val trunkAngle: Float,      // degrees from vertical — backrest
         val elbowAngle: Float,      // degrees shoulder→elbow→wrist — arm/keyboard
+        val neckAngle: Float,       // degrees from vertical — neck/monitor score
         val shrugGap: Float,        // ear.y − shoulder.y — armrest
         val neckFlexY: Float,       // ear.y − nose.y — neck flexion (raw)
         val neckState: NeckState,   // derived neck posture state — used for ROSA scoring
@@ -60,6 +61,10 @@ object RosaAnglesCalculator {
         val dy = abs(hip.y - shoulder.y).toDouble()
         val trunkAngle = if (dy < 1e-6) 90f else (atan2(dx, dy) * (180.0 / PI)).toFloat()
 
+        val neckDx    = abs(ear.x - shoulder.x).toDouble()
+        val neckDy    = abs(shoulder.y - ear.y).toDouble()
+        val neckAngle = if (neckDy < 1e-6) 90f else (atan2(neckDx, neckDy) * (180.0 / PI)).toFloat()
+
         val shrugGap        = ear.y - shoulder.y
         val neckFlexY       = ear.y - nose.y
         val noseAboveEar    = nose.y - ear.y
@@ -77,7 +82,7 @@ object RosaAnglesCalculator {
         val wristExtension = elbow.y - wrist.y
         val mouseReach     = abs(wrist.x - shoulder.x)
 
-        return Angles(useLeft, kneeAngle, trunkAngle, elbowAngle, shrugGap, neckFlexY, neckState, wristExtension, mouseReach)
+        return Angles(useLeft, kneeAngle, trunkAngle, elbowAngle, neckAngle, shrugGap, neckFlexY, neckState, wristExtension, mouseReach)
     }
 
     private fun angleBetween(p1: LandmarkPoint, vertex: LandmarkPoint, p2: LandmarkPoint): Float {

@@ -138,6 +138,7 @@ class PoseOverlayView @JvmOverloads constructor(
             0 to 1, 1 to 2, 2 to 3, 3 to 7,
             0 to 4, 4 to 5, 5 to 6, 6 to 8,
             9 to 10,
+            7 to 11, 8 to 12,
             11 to 12,
             11 to 13, 13 to 15, 15 to 17, 17 to 19, 19 to 15, 15 to 21,
             12 to 14, 14 to 16, 16 to 18, 18 to 20, 20 to 16, 16 to 22,
@@ -161,6 +162,7 @@ class PoseOverlayView @JvmOverloads constructor(
             if (landmarks.size < 29) return
             val left = angles.isLeftSide
 
+            val ear      = landmarks[if (left) 7 else 8]
             val shoulder = landmarks[if (left) 11 else 12]
             val elbow    = landmarks[if (left) 13 else 14]
             val wrist    = landmarks[if (left) 15 else 16]
@@ -184,6 +186,12 @@ class PoseOverlayView @JvmOverloads constructor(
             canvas.drawLine(hipSx, hipSy, hipSx, vRefSy, vertRefPaint)
             drawArc(canvas, shSx, shSy, hipSx, hipSy, hipSx, vRefSy,
                 "${"%.0f".format(angles.trunkAngle)}°", r, arcPaint, labelPaint)
+
+            // Neck angle — ear → shoulder ← vertical reference line
+            val neckVRefSy = sy(shoulder.y - 0.14f)
+            canvas.drawLine(shSx, shSy, shSx, neckVRefSy, vertRefPaint)
+            drawArc(canvas, sx(ear.x), sy(ear.y), shSx, shSy, shSx, neckVRefSy,
+                "${"%.0f".format(angles.neckAngle)}°", r * 0.75f, arcPaint, labelPaint)
 
             // Elbow angle — shoulder → elbow ← wrist
             drawArc(canvas, shSx, shSy, sx(elbow.x), sy(elbow.y),
