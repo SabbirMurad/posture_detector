@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:posture_detector/review_screen.dart';
 import 'package:posture_detector/rosa_score.dart';
+import 'package:posture_detector/workstation_answers.dart';
+import 'package:posture_detector/workstation_questionnaire.dart';
 
 class StartScreen extends StatefulWidget {
   const StartScreen({super.key});
@@ -15,9 +17,14 @@ class _StartScreenState extends State<StartScreen> {
   bool _loading = false;
 
   Future<void> _onStart() async {
+    final answers = await Navigator.of(context).push<WorkstationAnswers>(
+      MaterialPageRoute(builder: (_) => const WorkstationQuestionnaire()),
+    );
+    if (answers == null || !mounted) return;
+
     setState(() => _loading = true);
     try {
-      final result = await _channel.invokeMethod<Map>('startDetection');
+      final result = await _channel.invokeMethod<Map>('startDetection', answers.toMap());
       if (!mounted) return;
       if (result == null) return;
       final photoPaths = List<String>.from(result['photo_paths'] as List? ?? []);

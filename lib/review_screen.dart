@@ -88,19 +88,6 @@ class _PhotoScoreCard extends StatelessWidget {
     required this.allPaths,
   });
 
-  static Color _riskColor(int finalScore) {
-    if (finalScore <= 2) return const Color(0xFF43A047); // green
-    if (finalScore <= 4) return const Color(0xFFFFA000); // amber
-    if (finalScore <= 6) return const Color(0xFFEF6C00); // orange
-    return const Color(0xFFC62828);                      // red
-  }
-
-  static Color _subScoreColor(int s) {
-    if (s <= 1) return const Color(0xFF43A047);
-    if (s <= 2) return const Color(0xFFFFA000);
-    return const Color(0xFFC62828);
-  }
-
   @override
   Widget build(BuildContext context) {
     final finalScore = score?.final_score ?? 0;
@@ -222,27 +209,30 @@ class _PhotoScoreCard extends StatelessWidget {
                       _Chip('Arms', score!.armrest_score),
                     ],
                     chipColorFn: _subScoreColor,
+                    sectionColorFn: _riskColor,
                   ),
                   const SizedBox(height: 8),
                   _SectionRow(
                     icon: Icons.monitor,
                     label: 'Monitor',
-                    sectionScore: score!.monitor_score,
+                    sectionScore: score!.monitor_area_score,
                     chips: [
                       _Chip('Neck', score!.monitor_score),
                     ],
                     chipColorFn: _subScoreColor,
+                    sectionColorFn: _riskColor,
                   ),
                   const SizedBox(height: 8),
                   _SectionRow(
                     icon: Icons.keyboard,
                     label: 'Keyboard / Mouse',
-                    sectionScore: score!.peripheral_score,
+                    sectionScore: score!.mouse_keyboard_area_score,
                     chips: [
                       _Chip('Keys',  score!.keyboard_score),
                       _Chip('Mouse', score!.mouse_score),
                     ],
                     chipColorFn: _subScoreColor,
+                    sectionColorFn: _riskColor,
                   ),
                 ],
               ),
@@ -258,6 +248,19 @@ class _PhotoScoreCard extends StatelessWidget {
   }
 }
 
+Color _riskColor(int finalScore) {
+  if (finalScore <= 2) return const Color(0xFF43A047); // green
+  if (finalScore <= 4) return const Color(0xFFFFA000); // amber
+  if (finalScore <= 6) return const Color(0xFFEF6C00); // orange
+  return const Color(0xFFC62828);                      // red
+}
+
+Color _subScoreColor(int s) {
+  if (s <= 1) return const Color(0xFF43A047);
+  if (s <= 2) return const Color(0xFFFFA000);
+  return const Color(0xFFC62828);
+}
+
 class _Chip {
   final String label;
   final int value;
@@ -270,6 +273,7 @@ class _SectionRow extends StatelessWidget {
   final int sectionScore;
   final List<_Chip> chips;
   final Color Function(int) chipColorFn;
+  final Color Function(int) sectionColorFn;
 
   const _SectionRow({
     required this.icon,
@@ -277,6 +281,7 @@ class _SectionRow extends StatelessWidget {
     required this.sectionScore,
     required this.chips,
     required this.chipColorFn,
+    required this.sectionColorFn,
   });
 
   @override
@@ -290,6 +295,23 @@ class _SectionRow extends StatelessWidget {
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
                 color: Colors.grey[800])),
+        const SizedBox(width: 6),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(
+            color: sectionColorFn(sectionScore).withOpacity(0.15),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: sectionColorFn(sectionScore).withOpacity(0.5)),
+          ),
+          child: Text(
+            '$sectionScore',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: sectionColorFn(sectionScore),
+            ),
+          ),
+        ),
         const Spacer(),
         ...chips.map((c) => Padding(
               padding: const EdgeInsets.only(left: 6),

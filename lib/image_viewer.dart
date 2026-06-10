@@ -108,8 +108,6 @@ class _GalleryImageViewerState extends State<GalleryImageViewer> {
   }
 }
 
-// ── Public API ────────────────────────────────────────────────────────────────
-
 /// Pushes a full-screen [GalleryImageViewer] onto the navigator stack.
 void open_image_viewer({
   required BuildContext context,

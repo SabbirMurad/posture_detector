@@ -22,10 +22,15 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "startDetection" -> {
                         pendingResult = result
-                        startActivityForResult(
-                            Intent(this, PoseDetectionActivity::class.java),
-                            REQUEST_CODE
-                        )
+                        val answers = call.arguments as? Map<*, *>
+                        val intent = Intent(this, PoseDetectionActivity::class.java)
+                        if (answers != null) {
+                            intent.putExtra(
+                                PoseDetectionActivity.EXTRA_WORKSTATION_ANSWERS,
+                                org.json.JSONObject(answers).toString()
+                            )
+                        }
+                        startActivityForResult(intent, REQUEST_CODE)
                     }
                     else -> result.notImplemented()
                 }
@@ -44,10 +49,12 @@ class MainActivity : FlutterActivity() {
                     (0 until arr.length()).map { i ->
                         val obj = arr.getJSONObject(i)
                         hashMapOf<String, Any>(
-                            "final_score"       to obj.optInt("finalScore", 0),
-                            "risk_level"        to obj.optString("riskLevel", "Unknown"),
-                            "chair_score"       to obj.optInt("chairScore", 0),
-                            "peripheral_score"  to obj.optInt("peripheralScore", 0),
+                            "final_score"               to obj.optInt("finalScore", 0),
+                            "risk_level"                to obj.optString("riskLevel", "Unknown"),
+                            "chair_score"               to obj.optInt("chairScore", 0),
+                            "peripheral_score"          to obj.optInt("peripheralScore", 0),
+                            "monitor_area_score"        to obj.optInt("monitorAreaScore", 0),
+                            "mouse_keyboard_area_score" to obj.optInt("mouseKeyboardAreaScore", 0),
                             "seat_height_score" to obj.optInt("seatHeightScore", 0),
                             "backrest_score"    to obj.optInt("backrestScore", 0),
                             "armrest_score"     to obj.optInt("armrestScore", 0),

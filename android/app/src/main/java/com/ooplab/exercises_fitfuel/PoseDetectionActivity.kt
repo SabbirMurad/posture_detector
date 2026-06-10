@@ -45,6 +45,8 @@ class PoseDetectionActivity : AppCompatActivity() {
         const val EXTRA_PHOTO_PATHS  = "photo_paths"
         /** Activity-result extra: JSON array string of ROSA score maps, one per photo. */
         const val EXTRA_ROSA_SCORES  = "rosa_scores"
+        /** Launch extra: JSON object string of the manual workstation questionnaire answers. */
+        const val EXTRA_WORKSTATION_ANSWERS = "workstation_answers"
     }
 
     private enum class AppState { LIGHT_CHECK, DETECTING, POSE }
@@ -112,6 +114,9 @@ class PoseDetectionActivity : AppCompatActivity() {
     // CAPTURE_COOLDOWN_MS apart and only while every condition is currently OK.
     private val capturedPhotos = mutableListOf<Bitmap>()
     private val capturedScores = mutableListOf<RosaScorer.Result?>()
+
+    /** Manual checklist answers gathered by the Flutter questionnaire before launch. */
+    private lateinit var workstationModifiers: RosaScorer.WorkstationModifiers
     private val TOTAL_SHOTS_NEEDED = 3
     private val CAPTURE_COOLDOWN_MS = 2000L
 
@@ -160,6 +165,16 @@ class PoseDetectionActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         setupEdgeToEdge()
+
+        val answersJson = intent.getStringExtra(EXTRA_WORKSTATION_ANSWERS)
+        workstationModifiers = if (!answersJson.isNullOrEmpty()) {
+            val obj = org.json.JSONObject(answersJson)
+            val map = mutableMapOf<String, Any>()
+            obj.keys().forEach { key -> map[key] = obj.get(key) }
+            RosaScorer.WorkstationModifiers.fromMap(map)
+        } else {
+            RosaScorer.WorkstationModifiers()
+        }
 
         previewView      = findViewById(R.id.previewCam)
         poseOverlayView  = findViewById(R.id.poseOverlay)
@@ -325,7 +340,7 @@ class PoseDetectionActivity : AppCompatActivity() {
                             val angles   = RosaAnglesCalculator.compute(captured)
                             val photo    = bakeSkeletonOntoPhoto(blurred, captured, angles)
                             capturedPhotos.add(photo)
-                            capturedScores.add(if (angles != null) RosaScorer.score(angles) else null)
+                            capturedScores.add(if (angles != null) RosaScorer.score(angles, workstationModifiers) else null)
                             nextCaptureEarliestAtMs = now + CAPTURE_COOLDOWN_MS
                             val shotNumber = capturedPhotos.size
                             runOnUiThread {
