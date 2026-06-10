@@ -341,6 +341,9 @@ class PoseDetectionActivity : AppCompatActivity() {
                             val photo    = bakeSkeletonOntoPhoto(blurred, captured, angles)
                             capturedPhotos.add(photo)
                             capturedScores.add(if (angles != null) RosaScorer.score(angles, workstationModifiers) else null)
+                            if (angles != null && angles.lowerBodyConfidence == RosaAnglesCalculator.LowerBodyConfidence.LOW) {
+                                Log.d("RosaScorer", "Shot ${capturedPhotos.size}: knee occluded, seat-height score is a best-effort guess (kneeAngle=${angles.kneeAngle})")
+                            }
                             nextCaptureEarliestAtMs = now + CAPTURE_COOLDOWN_MS
                             val shotNumber = capturedPhotos.size
                             runOnUiThread {

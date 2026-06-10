@@ -128,6 +128,7 @@ object RosaScorer {
         val monitorScore: Int,
         val keyboardScore: Int,
         val mouseScore: Int,
+        val lowerBodyConfidence: String,
     ) {
         fun toMap(): Map<String, Any> = mapOf(
             "finalScore"             to finalScore,
@@ -142,6 +143,7 @@ object RosaScorer {
             "monitorScore"           to monitorScore,
             "keyboardScore"          to keyboardScore,
             "mouseScore"             to mouseScore,
+            "lowerBodyConfidence"    to lowerBodyConfidence,
         )
     }
 
@@ -245,6 +247,7 @@ object RosaScorer {
             sectB, sectC,
             seatHeightScore, backrestScore, armrestScore,
             monitorScore, keyboardScore, mouseScore,
+            angles.lowerBodyConfidence.name,
         )
     }
 }

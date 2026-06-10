@@ -22,6 +22,11 @@ object RosaAnglesCalculator {
 
     enum class NeckState { NEUTRAL, FORWARD_HEAD, MILD_FLEXION, SEVERE_FLEXION, HEAD_BACK }
 
+    // HIGH = knee angle is measured (or proxied from a visible knee); LOW = the
+    // knee itself was occluded and reconstructed, so the seat-height score is
+    // a best-effort guess.
+    enum class LowerBodyConfidence { HIGH, LOW }
+
     data class Angles(
         val isLeftSide: Boolean,    // which side was selected (true = left landmarks used)
         val kneeAngle: Float,       // degrees — seat height
@@ -33,6 +38,7 @@ object RosaAnglesCalculator {
         val neckState: NeckState,   // derived neck posture state — used for ROSA scoring
         val wristExtension: Float,  // elbow.y − wrist.y — keyboard
         val mouseReach: Float,      // |wrist.x − shoulder.x| — mouse
+        val lowerBodyConfidence: LowerBodyConfidence, // reliability of kneeAngle
     )
 
     fun compute(lm: List<LandmarkPoint>): Angles? {
@@ -54,7 +60,27 @@ object RosaAnglesCalculator {
         val knee     = if (useLeft) lm[LEFT_KNEE]      else lm[RIGHT_KNEE]
         val ankle    = if (useLeft) lm[LEFT_ANKLE]     else lm[RIGHT_ANKLE]
 
-        val kneeAngle  = angleBetween(hip, knee, ankle)
+        // Knee/ankle may be reconstructed (LegEstimator) when occluded. A fabricated
+        // ankle straight below the knee distorts angleBetween(), so when only the
+        // ankle is estimated, fall back to a hip-knee vertical-gap proxy — the same
+        // category a trained observer would read off a visible knee. If the knee
+        // itself is estimated, keep the geometric angle but flag low confidence.
+        val gapProxyAngle = when {
+            (knee.y - hip.y) < -0.02f -> 70f
+            (knee.y - hip.y) > 0.15f  -> 115f
+            else                      -> 92f
+        }
+        val (kneeAngle, lowerBodyConfidence) = when {
+            knee.estimated -> gapProxyAngle to LowerBodyConfidence.LOW
+            ankle.estimated -> gapProxyAngle to LowerBodyConfidence.HIGH
+            else -> {
+                val measured = angleBetween(hip, knee, ankle)
+                // >160° is essentially a straight leg — implausible while seated and
+                // more likely a pose-estimation glitch than a real measurement.
+                if (measured > 160f) gapProxyAngle to LowerBodyConfidence.LOW
+                else measured to LowerBodyConfidence.HIGH
+            }
+        }
         val elbowAngle = angleBetween(shoulder, elbow, wrist)
 
         val dx = abs(hip.x - shoulder.x).toDouble()
@@ -82,7 +108,7 @@ object RosaAnglesCalculator {
         val wristExtension = elbow.y - wrist.y
         val mouseReach     = abs(wrist.x - shoulder.x)
 
-        return Angles(useLeft, kneeAngle, trunkAngle, elbowAngle, neckAngle, shrugGap, neckFlexY, neckState, wristExtension, mouseReach)
+        return Angles(useLeft, kneeAngle, trunkAngle, elbowAngle, neckAngle, shrugGap, neckFlexY, neckState, wristExtension, mouseReach, lowerBodyConfidence)
     }
 
     private fun angleBetween(p1: LandmarkPoint, vertex: LandmarkPoint, p2: LandmarkPoint): Float {

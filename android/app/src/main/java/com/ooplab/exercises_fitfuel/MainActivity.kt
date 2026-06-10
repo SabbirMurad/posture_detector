@@ -61,6 +61,7 @@ class MainActivity : FlutterActivity() {
                             "monitor_score"     to obj.optInt("monitorScore", 0),
                             "keyboard_score"    to obj.optInt("keyboardScore", 0),
                             "mouse_score"       to obj.optInt("mouseScore", 0),
+                            "lower_body_confidence" to obj.optString("lowerBodyConfidence", "HIGH"),
                         )
                     }
                 } else emptyList<Map<String, Any>>()
