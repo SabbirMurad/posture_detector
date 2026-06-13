@@ -14,6 +14,20 @@
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
+		AE2000000000000000000001 /* DistanceEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1000000000000000000001 /* DistanceEstimator.swift */; };
+		AE2000000000000000000002 /* FaceBlurrer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1000000000000000000002 /* FaceBlurrer.swift */; };
+		AE2000000000000000000003 /* LandmarkPoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1000000000000000000003 /* LandmarkPoint.swift */; };
+		AE2000000000000000000004 /* LandmarkSmoother.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1000000000000000000004 /* LandmarkSmoother.swift */; };
+		AE2000000000000000000005 /* LegEstimator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1000000000000000000005 /* LegEstimator.swift */; };
+		AE2000000000000000000006 /* OneEuroFilter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1000000000000000000006 /* OneEuroFilter.swift */; };
+		AE2000000000000000000007 /* PoseDetectionViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1000000000000000000007 /* PoseDetectionViewController.swift */; };
+		AE2000000000000000000008 /* PoseOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1000000000000000000008 /* PoseOverlayView.swift */; };
+		AE2000000000000000000009 /* RosaAnglesCalculator.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE1000000000000000000009 /* RosaAnglesCalculator.swift */; };
+		AE200000000000000000000A /* RosaScorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE100000000000000000000A /* RosaScorer.swift */; };
+		AE200000000000000000000B /* TiltMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE100000000000000000000B /* TiltMonitor.swift */; };
+		AE200000000000000000000C /* YoloDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE100000000000000000000C /* YoloDetector.swift */; };
+		AE200000000000000000000D /* pose_landmarker_full.task in Resources */ = {isa = PBXBuildFile; fileRef = AE100000000000000000000D /* pose_landmarker_full.task */; };
+		AE200000000000000000000E /* yolov8n_float16.tflite in Resources */ = {isa = PBXBuildFile; fileRef = AE100000000000000000000E /* yolov8n_float16.tflite */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -55,6 +69,20 @@
 		97C146FD1CF9000F007C117D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		97C147001CF9000F007C117D /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		AE1000000000000000000001 /* DistanceEstimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DistanceEstimator.swift; sourceTree = "<group>"; };
+		AE1000000000000000000002 /* FaceBlurrer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FaceBlurrer.swift; sourceTree = "<group>"; };
+		AE1000000000000000000003 /* LandmarkPoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandmarkPoint.swift; sourceTree = "<group>"; };
+		AE1000000000000000000004 /* LandmarkSmoother.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LandmarkSmoother.swift; sourceTree = "<group>"; };
+		AE1000000000000000000005 /* LegEstimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegEstimator.swift; sourceTree = "<group>"; };
+		AE1000000000000000000006 /* OneEuroFilter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneEuroFilter.swift; sourceTree = "<group>"; };
+		AE1000000000000000000007 /* PoseDetectionViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PoseDetectionViewController.swift; sourceTree = "<group>"; };
+		AE1000000000000000000008 /* PoseOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PoseOverlayView.swift; sourceTree = "<group>"; };
+		AE1000000000000000000009 /* RosaAnglesCalculator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RosaAnglesCalculator.swift; sourceTree = "<group>"; };
+		AE100000000000000000000A /* RosaScorer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RosaScorer.swift; sourceTree = "<group>"; };
+		AE100000000000000000000B /* TiltMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TiltMonitor.swift; sourceTree = "<group>"; };
+		AE100000000000000000000C /* YoloDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoloDetector.swift; sourceTree = "<group>"; };
+		AE100000000000000000000D /* pose_landmarker_full.task */ = {isa = PBXFileReference; lastKnownFileType = file; path = pose_landmarker_full.task; sourceTree = "<group>"; };
+		AE100000000000000000000E /* yolov8n_float16.tflite */ = {isa = PBXFileReference; lastKnownFileType = file; path = yolov8n_float16.tflite; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -117,8 +145,38 @@
 				1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */,
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
+				AE3000000000000000000001 /* PostureEngine */,
+				AE3000000000000000000002 /* Models */,
 			);
 			path = Runner;
+			sourceTree = "<group>";
+		};
+		AE3000000000000000000001 /* PostureEngine */ = {
+			isa = PBXGroup;
+			children = (
+				AE1000000000000000000001 /* DistanceEstimator.swift */,
+				AE1000000000000000000002 /* FaceBlurrer.swift */,
+				AE1000000000000000000003 /* LandmarkPoint.swift */,
+				AE1000000000000000000004 /* LandmarkSmoother.swift */,
+				AE1000000000000000000005 /* LegEstimator.swift */,
+				AE1000000000000000000006 /* OneEuroFilter.swift */,
+				AE1000000000000000000007 /* PoseDetectionViewController.swift */,
+				AE1000000000000000000008 /* PoseOverlayView.swift */,
+				AE1000000000000000000009 /* RosaAnglesCalculator.swift */,
+				AE100000000000000000000A /* RosaScorer.swift */,
+				AE100000000000000000000B /* TiltMonitor.swift */,
+				AE100000000000000000000C /* YoloDetector.swift */,
+			);
+			path = PostureEngine;
+			sourceTree = "<group>";
+		};
+		AE3000000000000000000002 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				AE100000000000000000000D /* pose_landmarker_full.task */,
+				AE100000000000000000000E /* yolov8n_float16.tflite */,
+			);
+			path = Models;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -216,6 +274,8 @@
 				3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */,
 				97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */,
 				97C146FC1CF9000F007C117D /* Main.storyboard in Resources */,
+				AE200000000000000000000D /* pose_landmarker_full.task in Resources */,
+				AE200000000000000000000E /* yolov8n_float16.tflite in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -270,6 +330,18 @@
 			files = (
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
+				AE2000000000000000000001 /* DistanceEstimator.swift in Sources */,
+				AE2000000000000000000002 /* FaceBlurrer.swift in Sources */,
+				AE2000000000000000000003 /* LandmarkPoint.swift in Sources */,
+				AE2000000000000000000004 /* LandmarkSmoother.swift in Sources */,
+				AE2000000000000000000005 /* LegEstimator.swift in Sources */,
+				AE2000000000000000000006 /* OneEuroFilter.swift in Sources */,
+				AE2000000000000000000007 /* PoseDetectionViewController.swift in Sources */,
+				AE2000000000000000000008 /* PoseOverlayView.swift in Sources */,
+				AE2000000000000000000009 /* RosaAnglesCalculator.swift in Sources */,
+				AE200000000000000000000A /* RosaScorer.swift in Sources */,
+				AE200000000000000000000B /* TiltMonitor.swift in Sources */,
+				AE200000000000000000000C /* YoloDetector.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -346,7 +418,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = iphoneos;
@@ -472,7 +544,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
@@ -523,7 +595,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = iphoneos;
