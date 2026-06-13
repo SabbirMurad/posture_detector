@@ -33,10 +33,13 @@ target 'Runner' do
 
   flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
 
-  # Native posture-detection engine dependencies — these provide the iOS
-  # equivalents of the Android MediaPipe Tasks Vision + TensorFlow Lite stack.
+  # Native posture-detection engine dependency — provides the iOS equivalent of
+  # the Android MediaPipe Tasks Vision + TensorFlow Lite stack. Its
+  # MediaPipeTasksCommon dependency statically links the TensorFlow Lite C API,
+  # which YoloDetector calls directly (see TFLiteCAPI.h) instead of adding a
+  # second TensorFlowLiteSwift/TensorFlowLiteC copy (which caused duplicate
+  # symbol linker errors).
   pod 'MediaPipeTasksVision', '~> 0.10.21'
-  pod 'TensorFlowLiteSwift', '~> 2.14.0'
 
   target 'RunnerTests' do
     inherit! :search_paths

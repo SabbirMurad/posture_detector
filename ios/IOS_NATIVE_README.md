@@ -10,7 +10,7 @@ The two ML models are **cross-platform** and reused as-is:
 | Model file | Android (asset) | iOS (bundle resource) | Runtime |
 |---|---|---|---|
 | `pose_landmarker_full.task` | MediaPipe Tasks Vision | `MediaPipeTasksVision` pod | pose landmarks |
-| `yolov8n_float16.tflite` | TensorFlow Lite | `TensorFlowLiteSwift` pod | person/monitor detect |
+| `yolov8n_float16.tflite` | TensorFlow Lite | TFLite C API (via `MediaPipeTasksVision`) | person/monitor detect |
 
 ## What was added
 
@@ -24,7 +24,8 @@ ios/Runner/PostureEngine/
   RosaScorer.swift               ← port of RosaScorer.kt (lookup tables + checklist)
   DistanceEstimator.swift        ← port of DistanceEstimator.kt (uses camera intrinsics)
   TiltMonitor.swift              ← port of TiltMonitor.kt (CoreMotion accelerometer)
-  YoloDetector.swift             ← port of YoloDetector.kt (TensorFlow Lite Swift)
+  YoloDetector.swift             ← port of YoloDetector.kt (TensorFlow Lite C API)
+  TFLiteCAPI.h                   ← TFLite C API declarations for YoloDetector
   FaceBlurrer.swift              ← port of FaceBlurrer.kt (CoreGraphics pixelation)
   PoseOverlayView.swift          ← port of PoseOverlayView.kt (UIView + PoseRenderer)
   PoseDetectionViewController.swift ← port of PoseDetectionActivity.kt (AVFoundation + state machine)
@@ -32,8 +33,9 @@ ios/Runner/Models/
   pose_landmarker_full.task      ← copied from android assets
   yolov8n_float16.tflite         ← copied from android assets
 ios/Runner/AppDelegate.swift     ← registers the posture_detection MethodChannel
+ios/Runner/Runner-Bridging-Header.h ← imports PostureEngine/TFLiteCAPI.h
 ios/Runner/Info.plist            ← + NSCameraUsageDescription, NSMotionUsageDescription
-ios/Podfile                      ← adds MediaPipeTasksVision + TensorFlowLiteSwift
+ios/Podfile                      ← adds MediaPipeTasksVision
 ```
 
 ## One-time setup (must run on macOS with Xcode)
@@ -103,8 +105,16 @@ itself is complete; these are the project-wiring steps Xcode needs.
 - **Front camera** is horizontally mirrored via `isVideoMirrored` (natural selfie
   behaviour); the back camera (the default) matches Android exactly.
 - **GPU**: the Android build tries a TFLite GPU delegate first. This port runs YOLO on
-  CPU (4 threads) for simplicity. If you want the Metal delegate, add
-  `pod 'TensorFlowLiteSwift/Metal'` and create a `MetalDelegate` in `YoloDetector`.
+  CPU (4 threads) for simplicity.
+- **TensorFlow Lite runtime**: `YoloDetector` calls the TensorFlow Lite C API
+  directly (declared in `PostureEngine/TFLiteCAPI.h`, imported via
+  `Runner-Bridging-Header.h`) instead of depending on the `TensorFlowLiteSwift`
+  pod. `MediaPipeTasksVision`'s `MediaPipeTasksCommon` dependency already
+  statically links a full copy of this C API to run
+  `pose_landmarker_full.task`; adding `TensorFlowLiteSwift` would link a second
+  copy of the same ~48 C API symbols and fail with duplicate-symbol linker
+  errors. Do not add `TensorFlowLiteSwift`/`TensorFlowLiteC` back to the Podfile
+  without addressing that.
 
 ## If the MediaPipe pod version errors out
 
