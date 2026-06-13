@@ -108,8 +108,9 @@ itself is complete; these are the project-wiring steps Xcode needs.
 
 ## If the MediaPipe pod version errors out
 
-`MediaPipeTasksVision` pinned to `~> 0.20230731` matches the Android Gradle version.
-If CocoaPods can't resolve it, change the Podfile line to an available version
+`MediaPipeTasksVision` is pinned to `~> 0.10.21` (CocoaPods uses its own `0.10.x`
+versioning, not the `0.20230731`-style Android Maven version). If CocoaPods can't
+resolve `0.10.21`, change the Podfile line to another available version
 (`pod 'MediaPipeTasksVision'` with no constraint installs the latest) — the Swift API
 used here (`PoseLandmarker`, `PoseLandmarkerOptions`, `.liveStream`,
 `poseLandmarkerLiveStreamDelegate`, `detectAsync(image:timestampInMilliseconds:)`)

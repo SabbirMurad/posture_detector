@@ -35,7 +35,7 @@ target 'Runner' do
 
   # Native posture-detection engine dependencies — these provide the iOS
   # equivalents of the Android MediaPipe Tasks Vision + TensorFlow Lite stack.
-  pod 'MediaPipeTasksVision', '~> 0.20230731'
+  pod 'MediaPipeTasksVision', '~> 0.10.21'
   pod 'TensorFlowLiteSwift', '~> 2.14.0'
 
   target 'RunnerTests' do
