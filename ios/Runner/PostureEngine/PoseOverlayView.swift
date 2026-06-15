@@ -92,7 +92,14 @@ final class PoseOverlayView: UIView {
 
         if landmarks.isEmpty { return }
 
-        PoseRenderer.drawScene(in: ctx, landmarks: landmarks, angles: rosaAngles, sx: sx, sy: sy, scale: 1)
+        // The skeleton/dot/angle sizes below are tuned for Android's onDraw, whose
+        // canvas dimensions are raw device pixels (e.g. ~1080px wide). UIKit's
+        // draw(_:) operates in points (e.g. ~390pt wide on @3x phones), so the same
+        // constants would render ~3x too large relative to the screen. Scale down by
+        // the display density to match Android's on-screen proportions (and the
+        // baked-photo path, which does the analogous conversion via `bakeScale`).
+        let renderScale = 1 / max(traitCollection.displayScale, 1)
+        PoseRenderer.drawScene(in: ctx, landmarks: landmarks, angles: rosaAngles, sx: sx, sy: sy, scale: renderScale)
     }
 
     static let poseConnections = PoseRenderer.poseConnections
