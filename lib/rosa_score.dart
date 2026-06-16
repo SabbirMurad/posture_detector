@@ -43,6 +43,44 @@ class RosaScore {
     mouse_score:               m['mouse_score']               as int? ?? 11,
   );
 
+  /// Collapses several per-photo assessments into a single averaged score.
+  /// Only assessments that produced a valid final score (0–10) are averaged;
+  /// 11 is the "invalid/unknown" sentinel and is excluded. Each field is the
+  /// rounded mean across the valid assessments, and [risk_level] is re-derived
+  /// from the averaged [final_score] using the same thresholds as the native
+  /// RosaScorer. If nothing is valid, an all-invalid score is returned.
+  factory RosaScore.average(List<RosaScore> scores) {
+    final valid = scores.where((s) => s.final_score <= 10).toList();
+    if (valid.isEmpty) return RosaScore.fromMap(const {});
+
+    int avg(int Function(RosaScore) field) =>
+        (valid.map(field).reduce((a, b) => a + b) / valid.length).round();
+
+    final finalScore = avg((s) => s.final_score);
+    return RosaScore(
+      final_score:               finalScore,
+      risk_level:                _riskLevelFor(finalScore),
+      chair_score:               avg((s) => s.chair_score),
+      peripheral_score:          avg((s) => s.peripheral_score),
+      monitor_area_score:        avg((s) => s.monitor_area_score),
+      mouse_keyboard_area_score: avg((s) => s.mouse_keyboard_area_score),
+      seat_height_score:         avg((s) => s.seat_height_score),
+      backrest_score:            avg((s) => s.backrest_score),
+      armrest_score:             avg((s) => s.armrest_score),
+      monitor_score:             avg((s) => s.monitor_score),
+      keyboard_score:            avg((s) => s.keyboard_score),
+      mouse_score:               avg((s) => s.mouse_score),
+    );
+  }
+
+  // Mirrors the native RosaScorer thresholds.
+  static String _riskLevelFor(int finalScore) {
+    if (finalScore <= 2) return 'Low Risk';
+    if (finalScore <= 4) return 'Medium Risk';
+    if (finalScore <= 6) return 'High Risk';
+    return 'Very High Risk';
+  }
+
   Map<String, dynamic> toMap() => {
     'final_score':               final_score,
     'risk_level':                risk_level,

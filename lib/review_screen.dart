@@ -16,6 +16,8 @@ class ReviewScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final average = RosaScore.average(rosaScores);
+
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
       body: SafeArea(
@@ -35,24 +37,21 @@ class ReviewScreen extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
               child: Text(
-                'Scores are calculated from each captured photo.',
+                'Averaged across all captured photos.',
                 style: TextStyle(color: Colors.grey[600], fontSize: 13),
               ),
             ),
             Expanded(
-              child: ListView.separated(
+              child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                itemCount: photoPaths.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 16),
-                itemBuilder: (context, index) {
-                  final score = index < rosaScores.length ? rosaScores[index] : null;
-                  return _PhotoScoreCard(
-                    path: photoPaths[index],
-                    index: index,
-                    score: score,
-                    allPaths: photoPaths,
-                  );
-                },
+                children: [
+                  _PhotoStrip(paths: photoPaths),
+                  const SizedBox(height: 16),
+                  _AverageScoreCard(
+                    score: average,
+                    photoCount: photoPaths.length,
+                  ),
+                ],
               ),
             ),
             Padding(
@@ -75,24 +74,80 @@ class ReviewScreen extends StatelessWidget {
   }
 }
 
-class _PhotoScoreCard extends StatelessWidget {
-  final String path;
-  final int index;
-  final RosaScore? score;
-  final List<String> allPaths;
+/// Horizontal strip showing every captured photo. Tapping any thumbnail opens
+/// the full-screen gallery at that image.
+class _PhotoStrip extends StatelessWidget {
+  final List<String> paths;
 
-  const _PhotoScoreCard({
-    required this.path,
-    required this.index,
-    required this.score,
-    required this.allPaths,
-  });
+  const _PhotoStrip({required this.paths});
 
   @override
   Widget build(BuildContext context) {
-    final finalScore = score?.final_score ?? 0;
-    final riskLevel  = score?.risk_level  ?? '—';
-    final riskColor  = _riskColor(finalScore);
+    return SizedBox(
+      height: 220,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: paths.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 12),
+        itemBuilder: (context, index) {
+          return GestureDetector(
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => GalleryImageViewer(
+                images: paths.map((p) => FileImage(File(p))).toList(),
+                initial_index: index,
+                show_counter: true,
+              ),
+            )),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Stack(
+                children: [
+                  Image.file(
+                    File(paths[index]),
+                    width: 150,
+                    height: 220,
+                    fit: BoxFit.cover,
+                  ),
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        'Photo ${index + 1}',
+                        style:
+                            const TextStyle(color: Colors.white, fontSize: 13),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Single card showing the averaged ROSA score and its breakdown.
+class _AverageScoreCard extends StatelessWidget {
+  final RosaScore score;
+  final int photoCount;
+
+  const _AverageScoreCard({required this.score, required this.photoCount});
+
+  @override
+  Widget build(BuildContext context) {
+    final finalScore = score.final_score <= 10 ? score.final_score : 0;
+    final riskLevel = score.risk_level;
+    final riskColor = _riskColor(finalScore);
+    final valid = finalScore > 0;
 
     return Card(
       elevation: 2,
@@ -101,83 +156,26 @@ class _PhotoScoreCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ── Photo ──────────────────────────────────────────────────────────
-          Stack(
-            children: [
-              GestureDetector(
-                onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                  builder: (_) => GalleryImageViewer(
-                    images: allPaths.map((p) => FileImage(File(p))).toList(),
-                    initial_index: index,
-                    show_counter: true,
-                  ),
-                )),
-                child: Image.file(
-                  File(path),
-                  width: double.infinity,
-                  height: 240,
-                  fit: BoxFit.cover,
-                ),
-              ),
-              // Score badge
-              if (finalScore > 0)
-                Positioned(
-                  top: 10,
-                  right: 10,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: riskColor.withOpacity(0.92),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      '$finalScore / 10',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
+          // ── Header ───────────────────────────────────────────────────────
+          Container(
+            color: valid ? riskColor : Colors.grey,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              children: [
+                Text(
+                  valid ? 'Average ROSA Score: $finalScore / 10'
+                        : 'Average ROSA Score: —',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
                   ),
                 ),
-              // Photo label
-              Positioned(
-                top: 10,
-                left: 10,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    'Photo ${index + 1}',
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                  ),
-                ),
-              ),
-            ],
-          ),
-
-          // ── Score breakdown ────────────────────────────────────────────────
-          if (score != null) ...[
-            // Header
-            Container(
-              color: riskColor,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              child: Row(
-                children: [
-                  Text(
-                    'ROSA Score: $finalScore / 10',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                    ),
-                  ),
-                  const Spacer(),
+                const Spacer(),
+                if (valid)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 3),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.25),
                       borderRadius: BorderRadius.circular(12),
@@ -191,10 +189,12 @@ class _PhotoScoreCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                ],
-              ),
+              ],
             ),
-            // Sub-scores
+          ),
+
+          if (valid) ...[
+            // ── Sub-scores ─────────────────────────────────────────────────
             Padding(
               padding: const EdgeInsets.all(14),
               child: Column(
@@ -202,11 +202,11 @@ class _PhotoScoreCard extends StatelessWidget {
                   _SectionRow(
                     icon: Icons.chair,
                     label: 'Chair',
-                    sectionScore: score!.chair_score,
+                    sectionScore: score.chair_score,
                     chips: [
-                      _Chip('Seat', score!.seat_height_score),
-                      _Chip('Back', score!.backrest_score),
-                      _Chip('Arms', score!.armrest_score),
+                      _Chip('Seat', score.seat_height_score),
+                      _Chip('Back', score.backrest_score),
+                      _Chip('Arms', score.armrest_score),
                     ],
                     chipColorFn: _subScoreColor,
                     sectionColorFn: _riskColor,
@@ -215,9 +215,9 @@ class _PhotoScoreCard extends StatelessWidget {
                   _SectionRow(
                     icon: Icons.monitor,
                     label: 'Monitor',
-                    sectionScore: score!.monitor_area_score,
+                    sectionScore: score.monitor_area_score,
                     chips: [
-                      _Chip('Neck', score!.monitor_score),
+                      _Chip('Neck', score.monitor_score),
                     ],
                     chipColorFn: _subScoreColor,
                     sectionColorFn: _riskColor,
@@ -226,13 +226,32 @@ class _PhotoScoreCard extends StatelessWidget {
                   _SectionRow(
                     icon: Icons.keyboard,
                     label: 'Keyboard / Mouse',
-                    sectionScore: score!.mouse_keyboard_area_score,
+                    sectionScore: score.mouse_keyboard_area_score,
                     chips: [
-                      _Chip('Keys',  score!.keyboard_score),
-                      _Chip('Mouse', score!.mouse_score),
+                      _Chip('Keys', score.keyboard_score),
+                      _Chip('Mouse', score.mouse_score),
                     ],
                     chipColorFn: _subScoreColor,
                     sectionColorFn: _riskColor,
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 12),
+                    child: Divider(height: 1),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Row(
+                      children: [
+                        Icon(Icons.info_outline,
+                            size: 15, color: Colors.grey[500]),
+                        const SizedBox(width: 6),
+                        Text(
+                          'Averaged from $photoCount captured photos',
+                          style:
+                              TextStyle(color: Colors.grey[600], fontSize: 12),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -240,7 +259,8 @@ class _PhotoScoreCard extends StatelessWidget {
           ] else
             const Padding(
               padding: EdgeInsets.all(16),
-              child: Text('Score unavailable', style: TextStyle(color: Colors.grey)),
+              child: Text('Score unavailable',
+                  style: TextStyle(color: Colors.grey)),
             ),
         ],
       ),
@@ -252,7 +272,7 @@ Color _riskColor(int finalScore) {
   if (finalScore <= 2) return const Color(0xFF43A047); // green
   if (finalScore <= 4) return const Color(0xFFFFA000); // amber
   if (finalScore <= 6) return const Color(0xFFEF6C00); // orange
-  return const Color(0xFFC62828);                      // red
+  return const Color(0xFFC62828); // red
 }
 
 Color _subScoreColor(int s) {
