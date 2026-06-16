@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:posture_detector/assessment_database.dart';
 import 'package:posture_detector/review_screen.dart';
 import 'package:posture_detector/rosa_score.dart';
 import 'package:posture_detector/workstation_answers.dart';
@@ -31,6 +32,17 @@ class _StartScreenState extends State<StartScreen> {
       final rosaScores = (result['rosa_scores'] as List? ?? [])
           .map((e) => RosaScore.fromMap(Map<String, dynamic>.from(e as Map)))
           .toList();
+
+      // Persist this completed assessment (questionnaire answers + averaged
+      // score) so the success screen can export the full history to Excel.
+      if (rosaScores.isNotEmpty) {
+        await AssessmentDatabase.instance.saveAssessment(
+          answers: answers.toMap(),
+          score: RosaScore.average(rosaScores),
+          photoPaths: photoPaths,
+        );
+      }
+      if (!mounted) return;
 
       if (photoPaths.isNotEmpty) {
         Navigator.of(context).push(

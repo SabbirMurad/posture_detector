@@ -1,9 +1,45 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:posture_detector/assessment_database.dart';
+import 'package:posture_detector/assessment_export.dart';
 import 'package:posture_detector/start_screen.dart';
 
-class SuccessScreen extends StatelessWidget {
+class SuccessScreen extends StatefulWidget {
   const SuccessScreen({super.key});
+
+  @override
+  State<SuccessScreen> createState() => _SuccessScreenState();
+}
+
+class _SuccessScreenState extends State<SuccessScreen> {
+  bool _exporting = false;
+
+  Future<void> _downloadHistory() async {
+    setState(() => _exporting = true);
+    try {
+      final records = await AssessmentDatabase.instance.getAll();
+      if (!mounted) return;
+      if (records.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No assessment history yet.')),
+        );
+        return;
+      }
+      // Anchor the share popover for iPad.
+      final box = context.findRenderObject() as RenderBox?;
+      final origin = box != null
+          ? box.localToGlobal(Offset.zero) & box.size
+          : null;
+      await shareHistoryZip(records, sharePositionOrigin: origin);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Export failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -33,6 +69,28 @@ class SuccessScreen extends StatelessWidget {
                       ?.copyWith(color: Colors.grey),
                 ),
                 const SizedBox(height: 48),
+                SizedBox(
+                  width: double.infinity,
+                  height: 52,
+                  child: FilledButton.icon(
+                    onPressed: _exporting ? null : _downloadHistory,
+                    icon: _exporting
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.download),
+                    label: Text(
+                      _exporting ? 'Preparing…' : 'Download Assessment History',
+                      style: const TextStyle(fontSize: 16),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
                   height: 52,
