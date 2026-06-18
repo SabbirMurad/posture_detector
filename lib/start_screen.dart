@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:posture_detector/assessment_database.dart';
@@ -41,6 +43,12 @@ class _StartScreenState extends State<StartScreen> {
           score: RosaScore.average(rosaScores),
           photoPaths: photoPaths,
         );
+      }
+      // The native side reuses the same temp filenames each run, so Flutter's
+      // image cache (keyed on the file path) would otherwise show the previous
+      // capture. Evict them so the new files are decoded fresh from disk.
+      for (final path in photoPaths) {
+        await FileImage(File(path)).evict();
       }
       if (!mounted) return;
 

@@ -27,8 +27,13 @@ final class PoseDetectionViewController: UIViewController {
         self.workstationModifiers = workstationModifiers
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .fullScreen
+        // Let this screen drive the status bar (light icons over the black view)
+        // while presented over the Flutter view controller.
+        modalPresentationCapturesStatusBarAppearance = true
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
 
     // MARK: - State machine
 
@@ -46,6 +51,11 @@ final class PoseDetectionViewController: UIViewController {
     private var cameraPosition: AVCaptureDevice.Position = .back
     private let captureQueue = DispatchQueue(label: "posture.capture")
     private let ciContext = CIContext(options: nil)
+
+    // Aspect ratio (height / width) of the upright portrait video. Used to size
+    // the preview so it sits at the top of the screen rather than centered.
+    private var videoPortraitAspect: CGFloat = 0
+    private let previewTopGap: CGFloat = 48
 
     private var lastImageWidth = 1
     private var lastImageHeight = 1
@@ -96,7 +106,8 @@ final class PoseDetectionViewController: UIViewController {
     // MARK: - Views
 
     private var overlayView: PoseOverlayView!
-    private var detectionPanel: UIStackView!
+    private let levelView = CameraLevelView()
+    private var statusStack: UIStackView!
     private let tvLightStatus = UILabel()
     private let tvPersonStatus = UILabel()
     private let tvMonitorStatus = UILabel()
@@ -115,11 +126,13 @@ final class PoseDetectionViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .black
+        // #181818 — fills the status-bar area and the letterbox around the
+        // top-anchored camera preview.
+        view.backgroundColor = UIColor(white: 24.0 / 255.0, alpha: 1)
         buildUI()
 
-        tiltMonitor = TiltMonitor { [weak self] tiltAngle, rollAngle in
-            self?.handleTilt(tiltAngle: tiltAngle, rollAngle: rollAngle)
+        tiltMonitor = TiltMonitor { [weak self] tiltAngle, rollAngle, pitchAngle in
+            self?.handleTilt(tiltAngle: tiltAngle, rollAngle: rollAngle, pitchAngle: pitchAngle)
         }
 
         captureQueue.async { [weak self] in
@@ -132,9 +145,33 @@ final class PoseDetectionViewController: UIViewController {
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        previewLayer?.frame = view.bounds
-        flashOverlay.frame = view.bounds
-        overlayView?.frame = view.bounds
+        let rect = previewRect()
+        previewLayer?.frame = rect
+        flashOverlay.frame = rect
+        overlayView?.frame = rect
+        levelView.bounds = CGRect(x: 0, y: 0, width: 240, height: 220)
+        levelView.center = CGPoint(x: rect.midX, y: rect.midY)
+    }
+
+    /// The frame for the (aspect-fitted) camera preview and its pose overlay,
+    /// anchored to the top of the screen `previewTopGap` points below the safe
+    /// area instead of being vertically centered. Until the video aspect ratio
+    /// is known it falls back to the full bounds.
+    private func previewRect() -> CGRect {
+        let topInset = view.safeAreaInsets.top + previewTopGap
+        let fullWidth = view.bounds.width
+        let availableHeight = view.bounds.height - topInset
+        guard videoPortraitAspect > 0, fullWidth > 0, availableHeight > 0 else {
+            return view.bounds
+        }
+        var w = fullWidth
+        var h = w * videoPortraitAspect
+        if h > availableHeight {
+            h = availableHeight
+            w = h / videoPortraitAspect
+        }
+        let x = (view.bounds.width - w) / 2
+        return CGRect(x: x, y: topInset, width: w, height: h)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -186,6 +223,18 @@ final class PoseDetectionViewController: UIViewController {
             }
             self.session.addInput(input)
             self.computeFallbackFocal(device: device)
+
+            // Portrait display aspect (height/width). The active format's
+            // dimensions are landscape (width >= height); rotated to the portrait
+            // connection, the on-screen height/width ratio is width/height.
+            let dims = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+            if dims.width > 0 && dims.height > 0 {
+                let aspect = CGFloat(dims.width) / CGFloat(dims.height)
+                DispatchQueue.main.async {
+                    self.videoPortraitAspect = aspect
+                    self.view.setNeedsLayout()
+                }
+            }
 
             if self.session.outputs.isEmpty {
                 self.videoOutput.videoSettings =
@@ -256,8 +305,6 @@ final class PoseDetectionViewController: UIViewController {
                 self.overlayView.setHeightGuide(.hidden)
                 self.overlayView.updateRosaAngles(nil)
                 self.updatePanel(lightOk: nil)
-                self.detectionPanel.isHidden = false
-                self.detectionPanel.alpha = 1
             }
         }
     }
@@ -379,12 +426,10 @@ final class PoseDetectionViewController: UIViewController {
                 appState = .pose
                 yoloDetector = nil
                 DispatchQueue.main.async {
-                    UIView.animate(withDuration: 0.5, animations: {
-                        self.detectionPanel.alpha = 0
-                    }, completion: { _ in
-                        self.detectionPanel.isHidden = true
-                        self.detectionPanel.alpha = 1
-                    })
+                    // Entering pose phase: keep the condition list visible but
+                    // clear the detection-only progress bar and message.
+                    self.confirmProgress.isHidden = true
+                    self.tvStatusMessage.isHidden = true
                 }
             } else {
                 let c = confirmationCount
@@ -570,13 +615,14 @@ final class PoseDetectionViewController: UIViewController {
     // Tilt
     // =========================================================================
 
-    private func handleTilt(tiltAngle: Double, rollAngle: Double) {
+    private func handleTilt(tiltAngle: Double, rollAngle: Double, pitchAngle: Double) {
         let tOk = TiltMonitor.isTiltAcceptable(tiltAngle)
         let rOk = TiltMonitor.isRollAcceptable(rollAngle)
         captureQueue.async {
             self.tiltIsOk = tOk
             self.rotationIsOk = rOk
         }
+        levelView.update(roll: rollAngle, pitch: pitchAngle)
         tvTiltStatus.textColor = tOk ? colorDetected : colorNotDetected
         tvTiltStatus.text = tOk ? String(format: "● Tilt  %.1f°", tiltAngle)
                                 : String(format: "● Tilt  %.1f°  ·  Hold phone upright", tiltAngle)
@@ -670,28 +716,15 @@ final class PoseDetectionViewController: UIViewController {
         overlayView = PoseOverlayView(frame: view.bounds)
         view.addSubview(overlayView)
 
+        // Level indicator, centered on the preview (positioned in layout).
+        view.addSubview(levelView)
+
         flashOverlay.frame = view.bounds
         flashOverlay.backgroundColor = .white
         flashOverlay.alpha = 0
         flashOverlay.isHidden = true
         flashOverlay.isUserInteractionEnabled = false
         view.addSubview(flashOverlay)
-
-        for label in [tvTiltStatus, tvRotationStatus, tvDistanceStatus, tvSideViewStatus] {
-            styleStatusChip(label)
-        }
-        tvTiltStatus.text = "● Tilt  --°"
-        tvRotationStatus.text = "● Rotation  --"
-        tvDistanceStatus.text = "● Distance  --"
-        tvSideViewStatus.text = "● Side  --"
-
-        let topStack = UIStackView(arrangedSubviews: [tvTiltStatus, tvRotationStatus,
-                                                       tvDistanceStatus, tvSideViewStatus])
-        topStack.axis = .vertical
-        topStack.alignment = .center
-        topStack.spacing = 4
-        topStack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(topStack)
 
         tvCaptureStatus.font = .boldSystemFont(ofSize: 14)
         tvCaptureStatus.textColor = .white
@@ -704,53 +737,51 @@ final class PoseDetectionViewController: UIViewController {
         tvCaptureStatus.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(tvCaptureStatus)
 
-        buildDetectionPanel()
+        buildStatusStack()
 
-        let switchBtn = makeButton("Switch Camera", action: #selector(onSwitchCamera))
-        let resetBtn = makeButton("Reset", action: #selector(onReset))
+        let switchImage = UIImage(named: "ic_switch_camera")?.withRenderingMode(.alwaysTemplate)
+        let switchBtn = makeCircleIconButton(image: switchImage, action: #selector(onSwitchCamera))
         let closeBtn = makeButton("✕", action: #selector(onClose))
         view.addSubview(switchBtn)
-        view.addSubview(resetBtn)
         view.addSubview(closeBtn)
 
         let g = view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
-            topStack.topAnchor.constraint(equalTo: g.topAnchor, constant: 40),
-            topStack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            // All status conditions sit at the bottom-left in a single column (the
+            // camera preview is anchored to the top). 16pt from the leading edge
+            // mirrors the switch-camera button's 16pt from the trailing edge.
+            statusStack.leadingAnchor.constraint(equalTo: g.leadingAnchor, constant: 16),
+            statusStack.bottomAnchor.constraint(equalTo: g.bottomAnchor, constant: -48),
 
-            tvCaptureStatus.topAnchor.constraint(equalTo: topStack.bottomAnchor, constant: 8),
+            tvCaptureStatus.bottomAnchor.constraint(equalTo: statusStack.topAnchor, constant: -8),
             tvCaptureStatus.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 40),
             tvCaptureStatus.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -40),
 
-            resetBtn.topAnchor.constraint(equalTo: g.topAnchor, constant: 8),
-            resetBtn.leadingAnchor.constraint(equalTo: g.leadingAnchor, constant: 16),
-            switchBtn.topAnchor.constraint(equalTo: g.topAnchor, constant: 8),
+            // 66 = previewTopGap (48) + 18, so the control sits 18pt below the
+            // top edge of the camera preview.
+            switchBtn.topAnchor.constraint(equalTo: g.topAnchor, constant: 66),
             switchBtn.trailingAnchor.constraint(equalTo: g.trailingAnchor, constant: -16),
             closeBtn.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             closeBtn.bottomAnchor.constraint(equalTo: g.bottomAnchor, constant: -8),
-
-            detectionPanel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            detectionPanel.bottomAnchor.constraint(equalTo: g.bottomAnchor, constant: -48),
         ])
     }
 
-    private func buildDetectionPanel() {
-        let title = UILabel()
-        title.text = "STATUS"
-        title.font = .systemFont(ofSize: 11)
-        title.textColor = UIColor(white: 1, alpha: 0.5)
-
+    /// Builds the single bottom column listing every status condition, in order:
+    /// Light, Person, Monitor, Rotation, Tilt, Distance, Side — followed by the
+    /// confirmation progress bar and the general status message.
+    private func buildStatusStack() {
         tvLightStatus.text = "● Light"
         tvPersonStatus.text = "● Person"
         tvMonitorStatus.text = "● Monitor"
-        for l in [tvLightStatus, tvPersonStatus, tvMonitorStatus] {
-            l.font = .systemFont(ofSize: 15)
-            l.textColor = colorNeutral
-        }
+        tvRotationStatus.text = "● Rotation  --"
+        tvTiltStatus.text = "● Tilt  --°"
+        tvDistanceStatus.text = "● Distance  --"
+        tvSideViewStatus.text = "● Side  --"
 
-        let personMonitor = UIStackView(arrangedSubviews: [tvPersonStatus, tvMonitorStatus])
-        personMonitor.axis = .horizontal
-        personMonitor.spacing = 28
+        let conditions: [UILabel] = [tvLightStatus, tvPersonStatus, tvMonitorStatus,
+                                     tvRotationStatus, tvTiltStatus,
+                                     tvDistanceStatus, tvSideViewStatus]
+        for label in conditions { styleStatusChip(label) }
 
         confirmProgress.progressTintColor = colorDetected
         confirmProgress.trackTintColor = UIColor(white: 1, alpha: 0.2)
@@ -764,17 +795,16 @@ final class PoseDetectionViewController: UIViewController {
         tvStatusMessage.numberOfLines = 0
         tvStatusMessage.isHidden = true
 
-        detectionPanel = UIStackView(arrangedSubviews: [title, tvLightStatus, personMonitor,
-                                                         confirmProgress, tvStatusMessage])
-        detectionPanel.axis = .vertical
-        detectionPanel.alignment = .center
-        detectionPanel.spacing = 12
-        detectionPanel.isLayoutMarginsRelativeArrangement = true
-        detectionPanel.layoutMargins = UIEdgeInsets(top: 18, left: 32, bottom: 18, right: 32)
-        detectionPanel.backgroundColor = UIColor(white: 0.1, alpha: 0.8)
-        detectionPanel.layer.cornerRadius = 10
-        detectionPanel.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(detectionPanel)
+        var arranged = [UIView]()
+        arranged.append(contentsOf: conditions)
+        arranged.append(confirmProgress)
+        arranged.append(tvStatusMessage)
+        statusStack = UIStackView(arrangedSubviews: arranged)
+        statusStack.axis = .vertical
+        statusStack.alignment = .leading
+        statusStack.spacing = 6
+        statusStack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(statusStack)
     }
 
     private func styleStatusChip(_ label: UILabel) {
@@ -801,14 +831,29 @@ final class PoseDetectionViewController: UIViewController {
         return b
     }
 
+    /// A 48pt semi-transparent white circle holding a (template) icon image.
+    private func makeCircleIconButton(image: UIImage?, action: Selector) -> UIButton {
+        let b = UIButton(type: .system)
+        b.setImage(image, for: .normal)
+        b.tintColor = .white
+        b.imageView?.contentMode = .scaleAspectFit
+        b.contentEdgeInsets = UIEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        b.backgroundColor = UIColor(white: 1, alpha: 0.25)
+        b.layer.cornerRadius = 24
+        b.clipsToBounds = true
+        b.translatesAutoresizingMaskIntoConstraints = false
+        b.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        b.heightAnchor.constraint(equalToConstant: 48).isActive = true
+        b.addTarget(self, action: action, for: .touchUpInside)
+        return b
+    }
+
     /// Mirrors the Android `updatePanel` indicator logic.
     private func updatePanel(lightOk: Bool?,
                              personDetected: Bool = false,
                              monitorDetected: Bool = false,
                              confirmCount: Int = 0,
                              message: String? = nil) {
-        detectionPanel.isHidden = false
-
         switch lightOk {
         case nil: tvLightStatus.textColor = colorNeutral
         case .some(true): tvLightStatus.textColor = colorDetected
@@ -834,7 +879,6 @@ final class PoseDetectionViewController: UIViewController {
     private func showToast(_ text: String) {
         tvStatusMessage.text = text
         tvStatusMessage.isHidden = false
-        detectionPanel.isHidden = false
     }
 
     // MARK: - Button actions
@@ -844,8 +888,6 @@ final class PoseDetectionViewController: UIViewController {
         fullReset()
         setupCamera()
     }
-
-    @objc private func onReset() { fullReset() }
 
     @objc private func onClose() { finish(with: nil) }
 }
@@ -871,5 +913,93 @@ extension PoseDetectionViewController: PoseLandmarkerLiveStreamDelegate {
         captureQueue.async { [weak self] in
             self?.handlePoseResult(result)
         }
+    }
+}
+
+// =========================================================================
+// Level / horizon indicator
+// =========================================================================
+
+/// Camera level indicator (like the Pixel camera's "Level"). A fixed pair of
+/// side ticks plus a centre line that rotates with the phone's roll and shifts
+/// vertically with its forward/back pitch. Everything turns green when the phone
+/// is held upright and level (within `TiltMonitor`'s acceptable ranges).
+final class CameraLevelView: UIView {
+
+    private var roll: CGFloat = 0    // degrees, 0 = level
+    private var pitch: CGFloat = 0   // degrees, 0 = upright
+
+    // Match TiltMonitor's acceptable ranges.
+    private let rollTolerance: CGFloat = 15
+    private let pitchTolerance: CGFloat = 5
+
+    // Flip these if the motion feels reversed on device.
+    private let rollSign: CGFloat = -1
+    private let pitchSign: CGFloat = -1     // forward tilt → line moves up
+
+    private let pxPerDegree: CGFloat = 0.6  // small, proportional travel
+    private let maxOffset: CGFloat = 18
+    private let centerHalf: CGFloat = 36   // half-length of the wide centre / moving line
+    private let sideGap: CGFloat = 14      // gap between the centre line and each side tick
+    private let sideLen: CGFloat = 14      // length of the short side ticks
+    private let lineWidth: CGFloat = 1
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isOpaque = false
+        isUserInteractionEnabled = false
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func update(roll: Double, pitch: Double) {
+        self.roll = CGFloat(roll)
+        self.pitch = CGFloat(pitch)
+        setNeedsDisplay()
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        let cx = bounds.midX, cy = bounds.midY
+
+        let aligned = abs(roll) <= rollTolerance && abs(pitch) <= pitchTolerance
+        let color: UIColor = aligned
+            ? UIColor(red: 0x43 / 255.0, green: 0xA0 / 255.0, blue: 0x47 / 255.0, alpha: 1)
+            : UIColor(white: 1, alpha: 0.95)
+
+        ctx.setLineCap(.round)
+        ctx.setShadow(offset: .zero, blur: 3, color: UIColor(white: 0, alpha: 0.6).cgColor)
+        ctx.setStrokeColor(color.cgColor)
+        ctx.setLineWidth(lineWidth)
+
+        // Fixed reference: a wide centre line plus two shorter side ticks (3 lines,
+        // all horizontal and centred).
+        ctx.move(to: CGPoint(x: cx - centerHalf, y: cy))
+        ctx.addLine(to: CGPoint(x: cx + centerHalf, y: cy))
+        let tickInnerL = cx - centerHalf - sideGap
+        let tickInnerR = cx + centerHalf + sideGap
+        ctx.move(to: CGPoint(x: tickInnerL - sideLen, y: cy))
+        ctx.addLine(to: CGPoint(x: tickInnerL, y: cy))
+        ctx.move(to: CGPoint(x: tickInnerR, y: cy))
+        ctx.addLine(to: CGPoint(x: tickInnerR + sideLen, y: cy))
+        ctx.strokePath()
+
+        // Moving line: same width as the centre line, shifted vertically by pitch
+        // and rotated by roll. Overlaps the centre line when the phone is level.
+        let dy = max(-maxOffset, min(maxOffset, pitchSign * pitch * pxPerDegree))
+        // Deadzone: no rotation while roll is within the acceptable range, then
+        // rotate smoothly past it (so there's no jump at the threshold).
+        let effRoll: CGFloat = abs(roll) <= rollTolerance
+            ? 0 : roll - (roll < 0 ? -rollTolerance : rollTolerance)
+        let angle = rollSign * effRoll * .pi / 180
+        ctx.saveGState()
+        ctx.translateBy(x: cx, y: cy + dy)
+        ctx.rotate(by: angle)
+        ctx.setStrokeColor(color.cgColor)
+        ctx.setLineWidth(lineWidth)
+        ctx.move(to: CGPoint(x: -centerHalf, y: 0))
+        ctx.addLine(to: CGPoint(x: centerHalf, y: 0))
+        ctx.strokePath()
+        ctx.restoreGState()
     }
 }

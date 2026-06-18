@@ -19,12 +19,12 @@ final class TiltMonitor {
     private static let ALPHA: Float = 0.1
 
     private let motionManager = CMMotionManager()
-    private let onAnglesChanged: (_ tiltAngle: Double, _ rollAngle: Double) -> Void
+    private let onAnglesChanged: (_ tiltAngle: Double, _ rollAngle: Double, _ pitchAngle: Double) -> Void
 
     private var fx: Float = 0, fy: Float = 0, fz: Float = 0
     private var initialized = false
 
-    init(onAnglesChanged: @escaping (_ tiltAngle: Double, _ rollAngle: Double) -> Void) {
+    init(onAnglesChanged: @escaping (_ tiltAngle: Double, _ rollAngle: Double, _ pitchAngle: Double) -> Void) {
         self.onAnglesChanged = onAnglesChanged
     }
 
@@ -55,7 +55,10 @@ final class TiltMonitor {
         let tilt = atan2(Double(fy), Double((fx * fx + fz * fz).squareRoot())) * (180.0 / .pi)
         // Lateral roll: when upright fy ≈ g and fx ≈ 0; tilting left/right shifts fx.
         let roll = atan2(Double(fx), Double(fy)) * (180.0 / .pi)
+        // Signed forward/back pitch from upright (0° = upright); drives the level
+        // indicator's vertical offset. fz grows as the phone leans toward/away.
+        let pitch = atan2(Double(fz), Double(fy)) * (180.0 / .pi)
 
-        onAnglesChanged(tilt, roll)
+        onAnglesChanged(tilt, roll, pitch)
     }
 }

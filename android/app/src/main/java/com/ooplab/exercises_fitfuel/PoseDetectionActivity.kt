@@ -12,7 +12,6 @@ import android.media.Image
 import android.os.Bundle
 import android.util.Log
 import android.view.View
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -24,8 +23,10 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.framework.image.MPImage
@@ -56,7 +57,8 @@ class PoseDetectionActivity : AppCompatActivity() {
     // -------------------------------------------------------------------------
     private lateinit var previewView: PreviewView
     private lateinit var poseOverlayView: PoseOverlayView
-    private lateinit var detectionPanel: LinearLayout
+    private lateinit var cameraLevel: CameraLevelView
+    private lateinit var statusPanel: LinearLayout
     private lateinit var tvCaptureStatus: TextView
     private lateinit var flashOverlay: View
     private lateinit var tvLightStatus: TextView
@@ -88,6 +90,11 @@ class PoseDetectionActivity : AppCompatActivity() {
     @Volatile private var cameraProvider: ProcessCameraProvider? = null
     @Volatile private var lastImageWidth: Int  = 1
     @Volatile private var lastImageHeight: Int = 1
+
+    // Set once from the first frame: anchors the preview to the top of the
+    // screen (sized to the video aspect) instead of vertically centered.
+    @Volatile private var previewLaidOut = false
+    private val previewTopGapDp = 48f
 
     // Camera2 optics — read once per camera bind, used for distance estimation
     @Volatile private var focalLengthMm: Float  = 4.25f  // sensible fallback
@@ -178,7 +185,7 @@ class PoseDetectionActivity : AppCompatActivity() {
 
         previewView      = findViewById(R.id.previewCam)
         poseOverlayView  = findViewById(R.id.poseOverlay)
-        detectionPanel   = findViewById(R.id.detectionPanel)
+        statusPanel      = findViewById(R.id.statusPanel)
         tvLightStatus    = findViewById(R.id.tvLightStatus)
         tvPersonStatus   = findViewById(R.id.tvPersonStatus)
         tvMonitorStatus  = findViewById(R.id.tvMonitorStatus)
@@ -190,12 +197,14 @@ class PoseDetectionActivity : AppCompatActivity() {
         tvSideViewStatus      = findViewById(R.id.tvSideViewStatus)
         tvCaptureStatus         = findViewById(R.id.tvCaptureStatus)
         flashOverlay            = findViewById(R.id.flashOverlay)
+        cameraLevel             = findViewById(R.id.cameraLevel)
 
-        tiltMonitor = TiltMonitor(this) { tiltAngle, rollAngle ->
+        tiltMonitor = TiltMonitor(this) { tiltAngle, rollAngle, pitchAngle ->
             val tOk = TiltMonitor.isTiltAcceptable(tiltAngle)
             val rOk = TiltMonitor.isRollAcceptable(rollAngle)
             tiltIsOk     = tOk
             rotationIsOk = rOk
+            cameraLevel.update(rollAngle, pitchAngle)
 
             val tiltStr = "%.1f".format(tiltAngle)
             tvTiltStatus.setTextColor(if (tOk) COLOR_DETECTED else COLOR_NOT_DETECTED)
@@ -215,15 +224,11 @@ class PoseDetectionActivity : AppCompatActivity() {
         // Show initial panel state (all neutral, checking light)
         updatePanel(lightOk = null)
 
-        findViewById<Button>(R.id.btnSwitchCamera).setOnClickListener {
+        findViewById<View>(R.id.btnSwitchCamera).setOnClickListener {
             cameraSelector = if (cameraSelector == CameraSelector.DEFAULT_BACK_CAMERA)
                 CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
             fullReset()
             setupCamera()
-        }
-
-        findViewById<Button>(R.id.btnReset).setOnClickListener {
-            fullReset()
         }
 
         requestCameraPermission()
@@ -492,6 +497,15 @@ class PoseDetectionActivity : AppCompatActivity() {
             Log.e("AnalyzeImage", "Unsupported format"); imageProxy.close(); return
         }
 
+        if (!previewLaidOut) {
+            // Upright (portrait) display dimensions, same basis the overlay uses.
+            val rotated = imageProxy.imageInfo.rotationDegrees.let { it == 90 || it == 270 }
+            val dispW = if (rotated) imageProxy.height else imageProxy.width
+            val dispH = if (rotated) imageProxy.width else imageProxy.height
+            previewLaidOut = true
+            runOnUiThread { applyTopPreviewLayout(dispW, dispH) }
+        }
+
         when (appState) {
             AppState.LIGHT_CHECK -> runLightCheckPhase(mediaImage, imageProxy)
             AppState.DETECTING   -> runDetectionPhase(mediaImage, imageProxy)
@@ -570,12 +584,10 @@ class PoseDetectionActivity : AppCompatActivity() {
                 yoloDetector?.dispose()
                 yoloDetector = null
                 runOnUiThread {
-                    detectionPanel.animate()
-                        .alpha(0f).setDuration(500)
-                        .withEndAction {
-                            detectionPanel.visibility = View.GONE
-                            detectionPanel.alpha = 1f
-                        }.start()
+                    // Entering pose phase: keep the condition list visible but
+                    // clear the detection-only progress bar and message.
+                    confirmProgress.visibility = View.INVISIBLE
+                    tvStatusMessage.visibility = View.GONE
                 }
             } else {
                 runOnUiThread {
@@ -673,8 +685,6 @@ class PoseDetectionActivity : AppCompatActivity() {
         confirmCount: Int        = 0,
         message: String?         = null,
     ) {
-        detectionPanel.visibility = View.VISIBLE
-
         // Light
         tvLightStatus.setTextColor(when (lightOk) {
             null  -> COLOR_NEUTRAL
@@ -855,10 +865,46 @@ class PoseDetectionActivity : AppCompatActivity() {
     }
 
     private fun setupEdgeToEdge() {
+        // #181818 status/navigation bars (overrides the Material3 theme's default
+        // purple status bar), with light icons so they stay visible. On Android 15
+        // the bars are transparent and the root background shows through instead;
+        // setting the colors covers older API levels where they're opaque.
+        val barColor = Color.parseColor("#181818")
+        window.statusBarColor = barColor
+        window.navigationBarColor = barColor
+        WindowCompat.getInsetsController(window, window.decorView)
+            .isAppearanceLightStatusBars = false
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
             insets
+        }
+    }
+
+    /**
+     * Anchors the camera preview (and its pose overlay + shutter flash) to the
+     * top of the content area, [previewTopGapDp] below the status bar, sized to
+     * the video's aspect ratio so it isn't vertically centered. The root already
+     * pads for the status bar via [setupEdgeToEdge], so the gap is a plain top
+     * margin. Giving all three views the same width:height ratio keeps the
+     * skeleton overlay pixel-aligned with the preview.
+     */
+    private fun applyTopPreviewLayout(displayWidth: Int, displayHeight: Int) {
+        if (displayWidth <= 0 || displayHeight <= 0) return
+        val gap = (previewTopGapDp * resources.displayMetrics.density).toInt()
+        val ratio = "$displayWidth:$displayHeight" // W:H
+        for (id in intArrayOf(R.id.previewCam, R.id.poseOverlay, R.id.flashOverlay)) {
+            val view = findViewById<View>(id)
+            val lp = view.layoutParams as ConstraintLayout.LayoutParams
+            lp.topToTop = ConstraintLayout.LayoutParams.PARENT_ID
+            lp.bottomToBottom = ConstraintLayout.LayoutParams.UNSET
+            lp.startToStart = ConstraintLayout.LayoutParams.PARENT_ID
+            lp.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID
+            lp.width = 0
+            lp.height = 0
+            lp.topMargin = gap
+            lp.dimensionRatio = ratio
+            view.layoutParams = lp
         }
     }
 

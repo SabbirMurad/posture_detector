@@ -9,7 +9,7 @@ import kotlin.math.*
 
 class TiltMonitor(
     context: Context,
-    private val onAnglesChanged: (tiltAngle: Double, rollAngle: Double) -> Unit,
+    private val onAnglesChanged: (tiltAngle: Double, rollAngle: Double, pitchAngle: Double) -> Unit,
 ) : SensorEventListener {
 
     private val sensorManager =
@@ -47,7 +47,11 @@ class TiltMonitor(
         // SensorManager.getOrientation() which breaks near ±90° pitch (our exact case).
         val roll = atan2(fx.toDouble(), fy.toDouble()) * (180.0 / PI)
 
-        onAnglesChanged(tilt, roll)
+        // Signed forward/back pitch from upright (0° = upright); drives the level
+        // indicator's vertical offset. fz grows as the phone leans toward/away.
+        val pitch = atan2(fz.toDouble(), fy.toDouble()) * (180.0 / PI)
+
+        onAnglesChanged(tilt, roll, pitch)
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
