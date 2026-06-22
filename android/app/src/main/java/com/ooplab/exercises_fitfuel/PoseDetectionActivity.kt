@@ -31,6 +31,7 @@ import androidx.core.view.WindowInsetsCompat
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.framework.image.MPImage
 import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
 import java.io.ByteArrayOutputStream
@@ -269,7 +270,10 @@ class PoseDetectionActivity : AppCompatActivity() {
     private fun initializePoseLandmarker() {
         val options = PoseLandmarker.PoseLandmarkerOptions.builder()
                 .setBaseOptions(
-                    BaseOptions.builder().setModelAssetPath("pose_landmarker_full.task").build()
+                    BaseOptions.builder()
+                        .setModelAssetPath("pose_landmarker_full.task")
+                        .setDelegate(Delegate.GPU)
+                        .build()
                 )
                 .setRunningMode(RunningMode.LIVE_STREAM)
                 .setResultListener { result, _ ->

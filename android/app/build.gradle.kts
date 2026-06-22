@@ -68,12 +68,12 @@ dependencies {
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
 
-    implementation("androidx.camera:camera-lifecycle:1.3.4")
-    implementation("androidx.camera:camera-view:1.3.4")
-    implementation("androidx.camera:camera-camera2:1.3.4")
-    implementation("com.google.mediapipe:tasks-vision:0.20230731")
-    implementation("androidx.camera:camera-core:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.5.3")
+    implementation("androidx.camera:camera-view:1.5.3")
+    implementation("androidx.camera:camera-camera2:1.5.3")
+    implementation("com.google.mediapipe:tasks-vision:0.10.35")
+    implementation("androidx.camera:camera-core:1.5.3")
 
-    implementation("org.tensorflow:tensorflow-lite:2.14.0")
-    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.17.0")
 }
