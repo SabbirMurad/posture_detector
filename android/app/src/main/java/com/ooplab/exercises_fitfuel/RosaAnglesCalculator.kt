@@ -50,7 +50,18 @@ object RosaAnglesCalculator {
         // the nose in 2D than the occluded far ear.
         val leftEarDist  = hypot(nose.x - lm[LEFT_EAR].x,  nose.y - lm[LEFT_EAR].y)
         val rightEarDist = hypot(nose.x - lm[RIGHT_EAR].x, nose.y - lm[RIGHT_EAR].y)
-        val useLeft = leftEarDist >= rightEarDist
+        // Near (camera-facing) side. The visibly-detected leg — the one MediaPipe
+        // actually saw, rather than LegEstimator reconstructing it — is a reliable
+        // near-side signal in a profile view. The ear heuristic alone is unreliable
+        // here (both ears project near the back of the head), so it's only a
+        // fallback when leg visibility is ambiguous.
+        val leftLegVisible  = !lm[LEFT_KNEE].estimated
+        val rightLegVisible = !lm[RIGHT_KNEE].estimated
+        val useLeft = when {
+            leftLegVisible && !rightLegVisible -> true
+            rightLegVisible && !leftLegVisible -> false
+            else                               -> leftEarDist >= rightEarDist
+        }
 
         val ear      = if (useLeft) lm[LEFT_EAR]      else lm[RIGHT_EAR]
         val shoulder = if (useLeft) lm[LEFT_SHOULDER]  else lm[RIGHT_SHOULDER]

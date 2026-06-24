@@ -50,7 +50,21 @@ enum RosaAnglesCalculator {
         // the nose in 2D than the occluded far ear.
         let leftEarDist = hypotf(nose.x - lm[LEFT_EAR].x, nose.y - lm[LEFT_EAR].y)
         let rightEarDist = hypotf(nose.x - lm[RIGHT_EAR].x, nose.y - lm[RIGHT_EAR].y)
-        let useLeft = leftEarDist >= rightEarDist
+        // Near (camera-facing) side. The visibly-detected leg — the one MediaPipe
+        // actually saw, rather than LegEstimator reconstructing it — is a reliable
+        // near-side signal in a profile view. The ear heuristic alone is unreliable
+        // here (in profile both ears project near the back of the head), so it's
+        // only a fallback when leg visibility is ambiguous.
+        let leftLegVisible = !lm[LEFT_KNEE].estimated
+        let rightLegVisible = !lm[RIGHT_KNEE].estimated
+        let useLeft: Bool
+        if leftLegVisible && !rightLegVisible {
+            useLeft = true
+        } else if rightLegVisible && !leftLegVisible {
+            useLeft = false
+        } else {
+            useLeft = leftEarDist >= rightEarDist   // near ear sits farther from nose
+        }
 
         let ear = useLeft ? lm[LEFT_EAR] : lm[RIGHT_EAR]
         let shoulder = useLeft ? lm[LEFT_SHOULDER] : lm[RIGHT_SHOULDER]
