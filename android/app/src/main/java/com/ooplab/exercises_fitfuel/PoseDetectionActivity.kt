@@ -30,6 +30,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import com.google.mediapipe.framework.image.BitmapImageBuilder
 import com.google.mediapipe.framework.image.MPImage
+import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
@@ -51,7 +52,10 @@ class PoseDetectionActivity : AppCompatActivity() {
         const val EXTRA_WORKSTATION_ANSWERS = "workstation_answers"
     }
 
-    private enum class AppState { LIGHT_CHECK, DETECTING, POSE }
+    // FRONT is a 4th phase entered after the 3 side shots: the holder moves to
+    // the front of the person (behind the monitor) and a single extra photo is
+    // taken once the face, shoulders and hands are visible.
+    private enum class AppState { LIGHT_CHECK, DETECTING, POSE, FRONT }
 
     // -------------------------------------------------------------------------
     // Views
@@ -138,6 +142,14 @@ class PoseDetectionActivity : AppCompatActivity() {
     // consistent no matter where they came from or where they're displayed.
     private val SKELETON_REFERENCE_WIDTH = 1080f
     @Volatile private var nextCaptureEarliestAtMs = 0L
+
+    // ── Front-view (4th) shot ─────────────────────────────────────────────────
+    // Captured once face (nose), both shoulders and both wrists clear this
+    // visibility bar AND the phone is upright/level. The settle delay stops a
+    // premature capture while the holder is still walking the phone to the front.
+    private val FRONT_VISIBILITY_THRESHOLD = 0.5f
+    private val FRONT_READY_DELAY_MS = 1500L
+    @Volatile private var frontReadyEarliestAtMs = 0L
 
     // Hip spread / torso height ratio threshold for side-view detection.
     // Accepts camera within ~30° of true side view; unaffected by torso lean.
@@ -241,6 +253,7 @@ class PoseDetectionActivity : AppCompatActivity() {
         capturedPhotos.clear()
         capturedScores.clear()
         nextCaptureEarliestAtMs = 0L
+        frontReadyEarliestAtMs = 0L
         lastFrameBitmap = null
         successCount.set(0)
         distanceIsOk = false
@@ -256,6 +269,14 @@ class PoseDetectionActivity : AppCompatActivity() {
             tvCaptureStatus.visibility = View.GONE
             flashOverlay.visibility = View.GONE
             flashOverlay.alpha = 0f
+            // Restore the condition chips the front phase hides, in case we reset
+            // (e.g. camera switch) while in that phase.
+            tvLightStatus.visibility    = View.VISIBLE
+            tvPersonStatus.visibility   = View.VISIBLE
+            tvMonitorStatus.visibility  = View.VISIBLE
+            tvRotationStatus.visibility = View.VISIBLE
+            tvTiltStatus.visibility     = View.VISIBLE
+            tvDistanceStatus.visibility = View.VISIBLE
             poseOverlayView.updateLandmarks(emptyList(), 1, 1)
             poseOverlayView.setHeightGuide(PoseOverlayView.HeightGuideState.HIDDEN)
             updatePanel(lightOk = null)
@@ -355,18 +376,54 @@ class PoseDetectionActivity : AppCompatActivity() {
                             }
                             nextCaptureEarliestAtMs = now + CAPTURE_COOLDOWN_MS
                             val shotNumber = capturedPhotos.size
-                            runOnUiThread {
-                                triggerCaptureFlash()
-                                updateCaptureCue(allOk = true)
-                                if (shotNumber >= TOTAL_SHOTS_NEEDED) {
-                                    pauseCameraPipeline()
-                                    finishWithCapturedPhotos(capturedPhotos.toList(), capturedScores.toList())
+                            if (shotNumber >= TOTAL_SHOTS_NEEDED) {
+                                // Side shots done — switch to the front-view phase
+                                // instead of finishing. enterFrontPhase resets the
+                                // smoother/leg estimator; it must run on this
+                                // (result-listener) thread, not the UI thread.
+                                enterFrontPhase()
+                                runOnUiThread { triggerCaptureFlash() }
+                            } else {
+                                runOnUiThread {
+                                    triggerCaptureFlash()
+                                    updateCaptureCue(allOk = true)
                                 }
                             }
                         }
                     }
                 } else if (capturing) {
                     successCount.set(0)
+                }
+
+                // ── Front-view capture (4th shot, after the 3 side shots) ─────
+                // Condition: face/shoulders/hands visible. No tilt/level gate —
+                // the front shot doesn't need the phone held perfectly upright.
+                // Uses the raw (un-leg-estimated) smoothed landmarks and bakes the
+                // skeleton with no ROSA arcs. The photo carries no score.
+                if (currentState == AppState.FRONT) {
+                    val raw = landmarks.getOrNull(0)
+                    val frontVisible = raw != null && frontLandmarksVisible(raw)
+                    runOnUiThread { updateFrontCue(frontVisible) }
+                    val nowF = android.os.SystemClock.elapsedRealtime()
+                    if (frontVisible && nowF >= frontReadyEarliestAtMs) {
+                        if (successCount.incrementAndGet() >= SUCCESS_FRAMES_NEEDED) {
+                            successCount.set(0)
+                            val captured  = (sm ?: emptyList()).toList()
+                            val frameCopy = lastFrameBitmap?.copy(Bitmap.Config.ARGB_8888, true)
+                            if (frameCopy != null) {
+                                val blurred = FaceBlurrer.blurFace(frameCopy, captured)
+                                val photo   = bakeSkeletonOntoPhoto(blurred, captured, null)
+                                capturedPhotos.add(photo)   // front photo: no score appended
+                                runOnUiThread {
+                                    triggerCaptureFlash()
+                                    pauseCameraPipeline()
+                                    finishWithCapturedPhotos(capturedPhotos.toList(), capturedScores.toList())
+                                }
+                            }
+                        }
+                    } else {
+                        successCount.set(0)
+                    }
                 }
 
                 // ── Distance (POSE only) ──────────────────────────────────────
@@ -511,9 +568,10 @@ class PoseDetectionActivity : AppCompatActivity() {
         }
 
         when (appState) {
-            AppState.LIGHT_CHECK -> runLightCheckPhase(mediaImage, imageProxy)
-            AppState.DETECTING   -> runDetectionPhase(mediaImage, imageProxy)
-            AppState.POSE        -> runPosePhase(mediaImage, imageProxy)
+            AppState.LIGHT_CHECK    -> runLightCheckPhase(mediaImage, imageProxy)
+            AppState.DETECTING      -> runDetectionPhase(mediaImage, imageProxy)
+            // FRONT also needs live pose frames, so it shares the pose pipeline.
+            AppState.POSE, AppState.FRONT -> runPosePhase(mediaImage, imageProxy)
         }
     }
 
@@ -866,6 +924,58 @@ class PoseDetectionActivity : AppCompatActivity() {
             else ->
                 "Get into position for photo ${done + 1} of $TOTAL_SHOTS_NEEDED"
         }
+    }
+
+    // =========================================================================
+    // Front-view (4th) shot
+    // =========================================================================
+
+    /** Transitions from the side-shot phase to the front-view phase. Resets the
+     *  smoother/leg estimator (the view is changing entirely) and arms the settle
+     *  delay. Must be called on the result-listener thread — the same thread that
+     *  reads the smoother — so the resets don't race a frame in flight. */
+    private fun enterFrontPhase() {
+        appState = AppState.FRONT
+        successCount.set(0)
+        frontReadyEarliestAtMs = android.os.SystemClock.elapsedRealtime() + FRONT_READY_DELAY_MS
+        landmarkSmoother.reset()
+        legEstimator.reset()
+        runOnUiThread {
+            poseOverlayView.setHeightGuide(PoseOverlayView.HeightGuideState.HIDDEN)
+            // None of the side-view conditions apply to the front shot — hide them
+            // all and keep only the repurposed Side→Front chip.
+            tvLightStatus.visibility    = View.GONE
+            tvPersonStatus.visibility   = View.GONE
+            tvMonitorStatus.visibility  = View.GONE
+            tvRotationStatus.visibility = View.GONE
+            tvTiltStatus.visibility     = View.GONE
+            tvDistanceStatus.visibility = View.GONE
+            tvCaptureStatus.visibility  = View.VISIBLE
+            tvCaptureStatus.text = "Side photos done — move to the FRONT of the person, behind the monitor"
+        }
+    }
+
+    /** Face (nose), both shoulders and both wrists all above the visibility bar. */
+    private fun frontLandmarksVisible(raw: List<NormalizedLandmark>): Boolean {
+        if (raw.size < 17) return false
+        fun vis(i: Int) = raw[i].visibility().orElse(0f)
+        val face      = vis(0)  >= FRONT_VISIBILITY_THRESHOLD
+        val shoulders = vis(11) >= FRONT_VISIBILITY_THRESHOLD && vis(12) >= FRONT_VISIBILITY_THRESHOLD
+        val hands     = vis(15) >= FRONT_VISIBILITY_THRESHOLD && vis(16) >= FRONT_VISIBILITY_THRESHOLD
+        return face && shoulders && hands
+    }
+
+    /** Drives the capture banner + (repurposed) side chip during the front phase. */
+    private fun updateFrontCue(frontVisible: Boolean) {
+        tvCaptureStatus.visibility = View.VISIBLE
+        val settling = android.os.SystemClock.elapsedRealtime() < frontReadyEarliestAtMs
+        tvCaptureStatus.text = when {
+            settling      -> "Move to the FRONT of the person, behind the monitor"
+            frontVisible  -> "Hold steady — capturing front photo…"
+            else          -> "Show the person's face, shoulders and hands"
+        }
+        tvSideViewStatus.setTextColor(if (frontVisible) COLOR_DETECTED else COLOR_NOT_DETECTED)
+        tvSideViewStatus.text = if (frontVisible) "● Front  OK" else "● Front  Face/shoulders/hands"
     }
 
     private fun setupEdgeToEdge() {

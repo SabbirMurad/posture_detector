@@ -17,6 +17,8 @@ class ReviewScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final average = RosaScore.average(rosaScores);
+    // Photos beyond the scored side shots are the unscored front-view photo(s).
+    final scoredCount = rosaScores.length;
 
     return Scaffold(
       backgroundColor: const Color(0xFFF5F5F5),
@@ -45,11 +47,11 @@ class ReviewScreen extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                 children: [
-                  _PhotoStrip(paths: photoPaths),
+                  _PhotoStrip(paths: photoPaths, scoredCount: scoredCount),
                   const SizedBox(height: 16),
                   _AverageScoreCard(
                     score: average,
-                    photoCount: photoPaths.length,
+                    photoCount: scoredCount,
                   ),
                 ],
               ),
@@ -79,7 +81,10 @@ class ReviewScreen extends StatelessWidget {
 class _PhotoStrip extends StatelessWidget {
   final List<String> paths;
 
-  const _PhotoStrip({required this.paths});
+  /// How many leading photos are scored side views; the rest are front views.
+  final int scoredCount;
+
+  const _PhotoStrip({required this.paths, required this.scoredCount});
 
   @override
   Widget build(BuildContext context) {
@@ -119,7 +124,9 @@ class _PhotoStrip extends StatelessWidget {
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
-                        'Photo ${index + 1}',
+                        index < scoredCount
+                            ? 'Photo ${index + 1}'
+                            : 'Front view',
                         style:
                             const TextStyle(color: Colors.white, fontSize: 13),
                       ),

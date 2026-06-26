@@ -37,7 +37,10 @@ final class PoseDetectionViewController: UIViewController {
 
     // MARK: - State machine
 
-    private enum AppState { case lightCheck, detecting, pose }
+    // `front` is a 4th phase entered after the 3 side shots: the holder moves to
+    // the front of the person (behind the monitor) and a single extra photo is
+    // taken once the face, shoulders and hands are visible.
+    private enum AppState { case lightCheck, detecting, pose, front }
     private var appState: AppState = .lightCheck
 
     private var confirmationCount = 0
@@ -85,6 +88,14 @@ final class PoseDetectionViewController: UIViewController {
     private var nextCaptureEarliestAtMs: Double = 0
     private let SKELETON_REFERENCE_WIDTH: CGFloat = 1080
     private let SIDE_VIEW_THRESHOLD: Float = 0.35
+
+    // ── Front-view (4th) shot ─────────────────────────────────────────────────
+    // Captured once face (nose), both shoulders and both wrists clear this
+    // visibility bar AND the phone is upright/level. The settle delay stops a
+    // premature capture while the holder is still walking the phone to the front.
+    private let FRONT_VISIBILITY_THRESHOLD: Float = 0.5
+    private let FRONT_READY_DELAY_MS: Double = 1500
+    private var frontReadyEarliestAtMs: Double = 0
 
     private var tiltIsOk = false
     private var rotationIsOk = false
@@ -289,6 +300,7 @@ final class PoseDetectionViewController: UIViewController {
             self.capturedPhotos.removeAll()
             self.capturedScores.removeAll()
             self.nextCaptureEarliestAtMs = 0
+            self.frontReadyEarliestAtMs = 0
             self.lastFrameImage = nil
             self.successCount = 0
             self.distanceIsOk = false
@@ -301,6 +313,12 @@ final class PoseDetectionViewController: UIViewController {
                 self.tvCaptureStatus.isHidden = true
                 self.flashOverlay.isHidden = true
                 self.flashOverlay.alpha = 0
+                // Restore the condition chips the front phase hides, in case we
+                // reset (e.g. camera switch) while in that phase.
+                for chip in [self.tvLightStatus, self.tvPersonStatus, self.tvMonitorStatus,
+                             self.tvRotationStatus, self.tvTiltStatus, self.tvDistanceStatus] {
+                    chip.isHidden = false
+                }
                 self.overlayView.updateLandmarks([], imgWidth: 1, imgHeight: 1)
                 self.overlayView.setHeightGuide(.hidden)
                 self.overlayView.updateRosaAngles(nil)
@@ -341,7 +359,8 @@ final class PoseDetectionViewController: UIViewController {
         switch appState {
         case .lightCheck: runLightCheckPhase(pb)
         case .detecting: runDetectionPhase(pb)
-        case .pose: runPosePhase(pb)
+        // FRONT also needs live pose frames, so it shares the pose pipeline.
+        case .pose, .front: runPosePhase(pb)
         }
     }
 
@@ -544,22 +563,55 @@ final class PoseDetectionViewController: UIViewController {
                     capturedScores.append(angles != nil ? RosaScorer.score(angles!, mods: workstationModifiers) : nil)
                     nextCaptureEarliestAtMs = nowMs + CAPTURE_COOLDOWN_MS
                     let shotNumber = capturedPhotos.count
-                    DispatchQueue.main.async {
-                        self.triggerCaptureFlash()
-                        self.updateCaptureCue(allOk: true)
-                    }
                     if shotNumber >= TOTAL_SHOTS_NEEDED {
-                        let photos = capturedPhotos
-                        let scores = capturedScores
-                        pauseCameraPipeline()
+                        // Side shots done — switch to the front-view phase instead
+                        // of finishing. (handlePoseResult runs on captureQueue, so
+                        // the smoother/leg-estimator resets in enterFrontPhase are
+                        // serialized with frame analysis.)
+                        enterFrontPhase()
+                        DispatchQueue.main.async { self.triggerCaptureFlash() }
+                    } else {
                         DispatchQueue.main.async {
-                            self.finishWithCapturedPhotos(photos, scores: scores)
+                            self.triggerCaptureFlash()
+                            self.updateCaptureCue(allOk: true)
                         }
                     }
                 }
             }
         } else if capturing {
             successCount = 0
+        }
+
+        // ── Front-view capture (4th shot, after the 3 side shots) ──────────────
+        // Condition: face/shoulders/hands visible. No tilt/level gate — the front
+        // shot doesn't need the phone held perfectly upright. Uses the raw
+        // (un-leg-estimated) smoothed landmarks and bakes the skeleton with no
+        // ROSA arcs. The photo carries no score.
+        if currentState == .front {
+            let frontVisible = frontLandmarksVisible(rawLandmarks)
+            DispatchQueue.main.async { self.updateFrontCue(frontVisible: frontVisible) }
+            let nowMs = tSec * 1000
+            if frontVisible && nowMs >= frontReadyEarliestAtMs {
+                successCount += 1
+                if successCount >= SUCCESS_FRAMES_NEEDED {
+                    successCount = 0
+                    if let frame = lastFrameImage {
+                        let captured = smoothed
+                        let blurred = FaceBlurrer.blurFace(frame, landmarks: captured)
+                        let photo = bakeSkeletonOntoPhoto(blurred, landmarks: captured, angles: nil)
+                        capturedPhotos.append(photo)   // front photo: no score appended
+                        let photos = capturedPhotos
+                        let scores = capturedScores
+                        pauseCameraPipeline()
+                        DispatchQueue.main.async {
+                            self.triggerCaptureFlash()
+                            self.finishWithCapturedPhotos(photos, scores: scores)
+                        }
+                    }
+                }
+            } else {
+                successCount = 0
+            }
         }
 
         // ── Distance ──────────────────────────────────────────────────────────
@@ -701,6 +753,57 @@ final class PoseDetectionViewController: UIViewController {
         } else {
             tvCaptureStatus.text = "Get into position for photo \(done + 1) of \(TOTAL_SHOTS_NEEDED)"
         }
+    }
+
+    // =========================================================================
+    // Front-view (4th) shot
+    // =========================================================================
+
+    /// Transitions from the side-shot phase to the front-view phase. Resets the
+    /// smoother/leg estimator (the view is changing entirely) and arms the settle
+    /// delay. Called on captureQueue, so the resets are serialized with analysis.
+    private func enterFrontPhase() {
+        appState = .front
+        successCount = 0
+        frontReadyEarliestAtMs = CACurrentMediaTime() * 1000 + FRONT_READY_DELAY_MS
+        landmarkSmoother.reset()
+        legEstimator.reset()
+        DispatchQueue.main.async {
+            self.overlayView.setHeightGuide(.hidden)
+            // None of the side-view conditions apply to the front shot — hide them
+            // all (the stack collapses) and keep only the repurposed Side→Front chip.
+            for chip in [self.tvLightStatus, self.tvPersonStatus, self.tvMonitorStatus,
+                         self.tvRotationStatus, self.tvTiltStatus, self.tvDistanceStatus] {
+                chip.isHidden = true
+            }
+            self.tvCaptureStatus.isHidden = false
+            self.tvCaptureStatus.text = "Side photos done — move to the FRONT of the person, behind the monitor"
+        }
+    }
+
+    /// Face (nose), both shoulders and both wrists all above the visibility bar.
+    private func frontLandmarksVisible(_ raw: [RawLandmark]) -> Bool {
+        if raw.count < 17 { return false }
+        func vis(_ i: Int) -> Float { raw[i].visibility ?? 0 }
+        let face = vis(0) >= FRONT_VISIBILITY_THRESHOLD
+        let shoulders = vis(11) >= FRONT_VISIBILITY_THRESHOLD && vis(12) >= FRONT_VISIBILITY_THRESHOLD
+        let hands = vis(15) >= FRONT_VISIBILITY_THRESHOLD && vis(16) >= FRONT_VISIBILITY_THRESHOLD
+        return face && shoulders && hands
+    }
+
+    /// Drives the capture banner + (repurposed) side chip during the front phase.
+    private func updateFrontCue(frontVisible: Bool) {
+        tvCaptureStatus.isHidden = false
+        let settling = CACurrentMediaTime() * 1000 < frontReadyEarliestAtMs
+        if settling {
+            tvCaptureStatus.text = "Move to the FRONT of the person, behind the monitor"
+        } else if frontVisible {
+            tvCaptureStatus.text = "Hold steady — capturing front photo…"
+        } else {
+            tvCaptureStatus.text = "Show the person's face, shoulders and hands"
+        }
+        tvSideViewStatus.textColor = frontVisible ? colorDetected : colorNotDetected
+        tvSideViewStatus.text = frontVisible ? "● Front  OK" : "● Front  Face/shoulders/hands"
     }
 
     // =========================================================================
