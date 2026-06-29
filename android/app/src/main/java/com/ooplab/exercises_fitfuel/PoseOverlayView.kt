@@ -57,11 +57,21 @@ class PoseOverlayView @JvmOverloads constructor(
     private var imageHeight: Int = 1
     private var heightGuideState = HeightGuideState.HIDDEN
     private var rosaAngles: RosaAnglesCalculator.Angles? = null
+    // Landmark indices to omit from both connections and dots. Empty for the side
+    // shots (full skeleton); set during the front phase to mirror the captured
+    // photo (face/ears, wrist/palm and legs dropped).
+    private var excludedIndices: Set<Int> = emptySet()
 
     fun updateLandmarks(newLandmarks: List<LandmarkPoint>, imgWidth: Int, imgHeight: Int) {
         landmarks = newLandmarks
         imageWidth = imgWidth
         imageHeight = imgHeight
+        postInvalidate()
+    }
+
+    fun setExcludedIndices(indices: Set<Int>) {
+        if (excludedIndices == indices) return
+        excludedIndices = indices
         postInvalidate()
     }
 
@@ -113,6 +123,7 @@ class PoseOverlayView @JvmOverloads constructor(
 
         // ── Skeleton connections ───────────────────────────────────────────────
         for ((start, end) in POSE_CONNECTIONS) {
+            if (start in excludedIndices || end in excludedIndices) continue
             if (start < landmarks.size && end < landmarks.size) {
                 val s = landmarks[start]; val e = landmarks[end]
                 val paint = if (s.estimated || e.estimated) estimatedLinePaint else linePaint
@@ -121,7 +132,8 @@ class PoseOverlayView @JvmOverloads constructor(
         }
 
         // ── Landmark dots ──────────────────────────────────────────────────────
-        for (lm in landmarks) {
+        for ((i, lm) in landmarks.withIndex()) {
+            if (i in excludedIndices) continue
             if (lm.estimated) canvas.drawCircle(sx(lm.x), sy(lm.y), 5f, estimatedDotPaint)
             else              canvas.drawCircle(sx(lm.x), sy(lm.y), 7f, dotPaint)
         }
@@ -146,6 +158,52 @@ class PoseOverlayView @JvmOverloads constructor(
             23 to 25, 25 to 27, 27 to 29, 29 to 31, 31 to 27,
             24 to 26, 26 to 28, 28 to 30, 30 to 32, 32 to 28
         )
+
+        /** MediaPipe's canonical 21-point hand skeleton: thumb, four fingers, palm. */
+        val HAND_CONNECTIONS = listOf(
+            0 to 1, 1 to 2, 2 to 3, 3 to 4,        // thumb
+            0 to 5, 5 to 6, 6 to 7, 7 to 8,        // index
+            5 to 9, 9 to 10, 10 to 11, 11 to 12,   // middle
+            9 to 13, 13 to 14, 14 to 15, 15 to 16, // ring
+            13 to 17, 17 to 18, 18 to 19, 19 to 20,// pinky
+            0 to 17,                                // palm base
+        )
+
+        /** Draws the detected hands and the elbow→wrist connector. Shared by the live
+         *  overlay and bakeSkeletonOntoPhoto so both look identical. Uses the same
+         *  [linePaint]/[dotPaint] as the body skeleton so the hand reads as a
+         *  continuation of the arm. [poseLandmarks] supplies the elbows (13/14);
+         *  each hand's wrist (point 0) is joined to its nearest elbow. */
+        fun drawHands(
+            canvas: Canvas,
+            hands: List<List<LandmarkPoint>>,
+            poseLandmarks: List<LandmarkPoint>,
+            sx: (Float) -> Float,
+            sy: (Float) -> Float,
+            linePaint: Paint,
+            dotPaint: Paint,
+            dotRadius: Float,
+        ) {
+            val elbows = listOfNotNull(poseLandmarks.getOrNull(13), poseLandmarks.getOrNull(14))
+            for (hand in hands) {
+                val h0 = hand.getOrNull(0)
+                if (h0 != null && elbows.isNotEmpty()) {
+                    // Nearest elbow by squared pixel distance (comparable, no sqrt).
+                    val nearest = elbows.minByOrNull {
+                        val dx = sx(it.x) - sx(h0.x); val dy = sy(it.y) - sy(h0.y)
+                        dx * dx + dy * dy
+                    }!!
+                    canvas.drawLine(sx(nearest.x), sy(nearest.y), sx(h0.x), sy(h0.y), linePaint)
+                }
+                for ((start, end) in HAND_CONNECTIONS) {
+                    if (start < hand.size && end < hand.size) {
+                        canvas.drawLine(sx(hand[start].x), sy(hand[start].y),
+                                        sx(hand[end].x), sy(hand[end].y), linePaint)
+                    }
+                }
+                for (lm in hand) canvas.drawCircle(sx(lm.x), sy(lm.y), dotRadius, dotPaint)
+            }
+        }
 
         /** Draws the three ROSA angle arcs onto [canvas]. Called from both the live
          *  overlay (onDraw) and bakeSkeletonOntoPhoto, so both views look identical. */

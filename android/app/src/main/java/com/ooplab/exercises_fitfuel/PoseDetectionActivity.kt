@@ -34,6 +34,8 @@ import com.google.mediapipe.tasks.components.containers.NormalizedLandmark
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
+import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker
+import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult
 import com.google.mediapipe.tasks.vision.poselandmarker.PoseLandmarker
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -50,6 +52,11 @@ class PoseDetectionActivity : AppCompatActivity() {
         const val EXTRA_ROSA_SCORES  = "rosa_scores"
         /** Launch extra: JSON object string of the manual workstation questionnaire answers. */
         const val EXTRA_WORKSTATION_ANSWERS = "workstation_answers"
+
+        /** Pose landmark indices omitted in the front view (both the baked photo and
+         *  the live overlay): face/eyes/ears/mouth (0..10), wrist/palm (15..22) — the
+         *  hand landmarker supplies those on the photo — and legs (25..32). */
+        val FRONT_SKELETON_EXCLUDE = ((0..10) + (15..22) + (25..32)).toSet()
     }
 
     // FRONT is a 4th phase entered after the 3 side shots: the holder moves to
@@ -86,6 +93,11 @@ class PoseDetectionActivity : AppCompatActivity() {
     // -------------------------------------------------------------------------
     private lateinit var cameraExecutor: ExecutorService
     @Volatile private var poseLandmarker: PoseLandmarker? = null
+
+    // Hand landmarker — IMAGE mode, used only once on the captured FRONT still to
+    // overlay finger/palm points. Never runs on live frames. Created lazily when
+    // the front phase begins (the settle delay absorbs the one-time setup cost).
+    @Volatile private var handLandmarker: HandLandmarker? = null
     private var yoloDetector: YoloDetector? = null
 
     // -------------------------------------------------------------------------
@@ -149,6 +161,10 @@ class PoseDetectionActivity : AppCompatActivity() {
     // premature capture while the holder is still walking the phone to the front.
     private val FRONT_VISIBILITY_THRESHOLD = 0.5f
     private val FRONT_READY_DELAY_MS = 1500L
+    // After the entry settle, the face/shoulders/hands must stay visible for this
+    // many *consecutive* frames before the front photo is taken — any drop in
+    // visibility resets the count, so the holder must hold steady once in position.
+    private val FRONT_FRAMES_NEEDED = 30
     @Volatile private var frontReadyEarliestAtMs = 0L
 
     // Hip spread / torso height ratio threshold for side-view detection.
@@ -259,6 +275,8 @@ class PoseDetectionActivity : AppCompatActivity() {
         distanceIsOk = false
         poseLandmarker?.close()
         poseLandmarker = null
+        handLandmarker?.close()
+        handLandmarker = null
         landmarkSmoother.reset()
         legEstimator.reset()
         cameraExecutor.execute {
@@ -279,6 +297,7 @@ class PoseDetectionActivity : AppCompatActivity() {
             tvDistanceStatus.visibility = View.VISIBLE
             poseOverlayView.updateLandmarks(emptyList(), 1, 1)
             poseOverlayView.setHeightGuide(PoseOverlayView.HeightGuideState.HIDDEN)
+            poseOverlayView.setExcludedIndices(emptySet())
             updatePanel(lightOk = null)
             poseOverlayView.updateRosaAngles(null)
         }
@@ -406,13 +425,30 @@ class PoseDetectionActivity : AppCompatActivity() {
                     runOnUiThread { updateFrontCue(frontVisible) }
                     val nowF = android.os.SystemClock.elapsedRealtime()
                     if (frontVisible && nowF >= frontReadyEarliestAtMs) {
-                        if (successCount.incrementAndGet() >= SUCCESS_FRAMES_NEEDED) {
+                        // Capture once the condition has held for FRONT_FRAMES_NEEDED
+                        // consecutive frames past the entry settle.
+                        if (successCount.incrementAndGet() >= FRONT_FRAMES_NEEDED) {
                             successCount.set(0)
                             val captured  = (sm ?: emptyList()).toList()
                             val frameCopy = lastFrameBitmap?.copy(Bitmap.Config.ARGB_8888, true)
                             if (frameCopy != null) {
+                                // Detect hands on the CLEAN frame first (before face
+                                // blur / skeleton bake mutate it), then draw the
+                                // finger/palm overlay on top of the baked photo.
+                                val handResult = detectHands(frameCopy)
                                 val blurred = FaceBlurrer.blurFace(frameCopy, captured)
-                                val photo   = bakeSkeletonOntoPhoto(blurred, captured, null)
+                                // Front view is upper-body only — drop the leg
+                                // landmarks (knees/ankles/feet, indices 25+). Also
+                                // drop the face/ear points (0..10) — the face is
+                                // blurred, so no face dots or lines — and the pose
+                                // wrist/palm points (15..22): the hand landmarker
+                                // supplies the wrist/finger detail, and we connect the
+                                // elbow straight to the hand's point 0 so the arm
+                                // flows seamlessly into the detected hand.
+                                val upperBody = captured.take(25)
+                                val photo   = bakeSkeletonOntoPhoto(
+                                    blurred, upperBody, null, excludeIndices = FRONT_SKELETON_EXCLUDE)
+                                drawHandsOntoPhoto(photo, handResult, captured)
                                 capturedPhotos.add(photo)   // front photo: no score appended
                                 runOnUiThread {
                                     triggerCaptureFlash()
@@ -422,6 +458,7 @@ class PoseDetectionActivity : AppCompatActivity() {
                             }
                         }
                     } else {
+                        // Visibility dropped (or still in the entry settle) — reset the count.
                         successCount.set(0)
                     }
                 }
@@ -465,6 +502,28 @@ class PoseDetectionActivity : AppCompatActivity() {
             }.build()
 
         poseLandmarker = PoseLandmarker.createFromOptions(this, options)
+    }
+
+    /** Creates the IMAGE-mode hand landmarker if not already created. Runs CPU
+     *  delegate to avoid contending with the pose landmarker's GPU context — it
+     *  only ever fires once, on a single still, so throughput doesn't matter. */
+    private fun initializeHandLandmarker() {
+        if (handLandmarker != null) return
+        try {
+            val options = HandLandmarker.HandLandmarkerOptions.builder()
+                .setBaseOptions(
+                    BaseOptions.builder()
+                        .setModelAssetPath("hand_landmarker.task")
+                        .setDelegate(Delegate.CPU)
+                        .build()
+                )
+                .setRunningMode(RunningMode.IMAGE)
+                .setNumHands(2)
+                .build()
+            handLandmarker = HandLandmarker.createFromOptions(this, options)
+        } catch (e: Exception) {
+            Log.e("HandLandmarker", "Failed to create hand landmarker", e)
+        }
     }
 
     // =========================================================================
@@ -835,6 +894,7 @@ class PoseDetectionActivity : AppCompatActivity() {
         photo: Bitmap,
         landmarks: List<LandmarkPoint>,
         angles: RosaAnglesCalculator.Angles?,
+        excludeIndices: Set<Int> = emptySet(),
     ): Bitmap {
         val canvas = Canvas(photo)
         val w = photo.width.toFloat()
@@ -861,6 +921,7 @@ class PoseDetectionActivity : AppCompatActivity() {
         }
 
         for ((start, end) in PoseOverlayView.POSE_CONNECTIONS) {
+            if (start in excludeIndices || end in excludeIndices) continue
             if (start < landmarks.size && end < landmarks.size) {
                 val s = landmarks[start]
                 val e = landmarks[end]
@@ -868,7 +929,8 @@ class PoseDetectionActivity : AppCompatActivity() {
                 canvas.drawLine(s.x * w, s.y * h, e.x * w, e.y * h, paint)
             }
         }
-        for (lm in landmarks) {
+        for ((i, lm) in landmarks.withIndex()) {
+            if (i in excludeIndices) continue
             val paint = if (lm.estimated) estimatedDotPaint else dotPaint
             val radius = (if (lm.estimated) 5f else 7f) * bakeScale
             canvas.drawCircle(lm.x * w, lm.y * h, radius, paint)
@@ -895,6 +957,52 @@ class PoseDetectionActivity : AppCompatActivity() {
 
         return photo
     }
+
+    /** Runs the hand landmarker on a single still (IMAGE mode). Returns null if the
+     *  landmarker isn't available or detection fails — the overlay is then simply
+     *  skipped, never blocking the capture. */
+    private fun detectHands(bitmap: Bitmap): HandLandmarkerResult? {
+        val hl = handLandmarker ?: return null
+        return try {
+            hl.detect(BitmapImageBuilder(bitmap).build())
+        } catch (e: Exception) {
+            Log.e("HandLandmarker", "detect failed", e)
+            null
+        }
+    }
+
+    /** Draws each detected hand's 21-point skeleton (finger joints + palm) onto the
+     *  photo, and joins each hand's wrist (point 0) to the nearest pose elbow with a
+     *  white arm-style bone so the arm flows seamlessly into the detected hand.
+     *  Uses the same white lines / green dots as the body skeleton so the hand reads
+     *  as a continuation of the arm. [poseLandmarks] supplies the elbows (13/14). */
+    private fun drawHandsOntoPhoto(
+        photo: Bitmap,
+        result: HandLandmarkerResult?,
+        poseLandmarks: List<LandmarkPoint>,
+    ) {
+        val hands = handsToPoints(result)
+        if (hands.isEmpty()) return
+
+        val canvas = Canvas(photo)
+        val w = photo.width.toFloat()
+        val h = photo.height.toFloat()
+        val bakeScale = w / SKELETON_REFERENCE_WIDTH
+
+        // Same paints as the baked body skeleton (white bones, green joints).
+        val linePaint = Paint().apply {
+            color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 6f * bakeScale; isAntiAlias = true
+        }
+        val dotPaint = Paint().apply { color = Color.GREEN; style = Paint.Style.FILL; isAntiAlias = true }
+
+        PoseOverlayView.drawHands(canvas, hands, poseLandmarks,
+            { x -> x * w }, { y -> y * h }, linePaint, dotPaint, 7f * bakeScale)
+    }
+
+    /** Converts a hand-landmarker result into normalised [LandmarkPoint] lists (one
+     *  per hand), the shape both the live overlay and the baked photo render. */
+    private fun handsToPoints(result: HandLandmarkerResult?): List<List<LandmarkPoint>> =
+        result?.landmarks()?.map { hand -> hand.map { LandmarkPoint(it.x(), it.y()) } } ?: emptyList()
 
     /** Camera-shutter flash — brief white flash so the phone holder feels each shot register. */
     private fun triggerCaptureFlash() {
@@ -940,8 +1048,13 @@ class PoseDetectionActivity : AppCompatActivity() {
         frontReadyEarliestAtMs = android.os.SystemClock.elapsedRealtime() + FRONT_READY_DELAY_MS
         landmarkSmoother.reset()
         legEstimator.reset()
+        // Prepare the hand landmarker now so it's ready to run on the front still.
+        initializeHandLandmarker()
         runOnUiThread {
             poseOverlayView.setHeightGuide(PoseOverlayView.HeightGuideState.HIDDEN)
+            // Live overlay mirrors the captured front photo: drop face/ears,
+            // wrist/palm and legs from the skeleton.
+            poseOverlayView.setExcludedIndices(FRONT_SKELETON_EXCLUDE)
             // None of the side-view conditions apply to the front shot — hide them
             // all and keep only the repurposed Side→Front chip.
             tvLightStatus.visibility    = View.GONE
@@ -1036,6 +1149,7 @@ class PoseDetectionActivity : AppCompatActivity() {
         super.onDestroy()
         cameraExecutor.shutdown()
         poseLandmarker?.close()
+        handLandmarker?.close()
         yoloDetector?.dispose()
     }
 }

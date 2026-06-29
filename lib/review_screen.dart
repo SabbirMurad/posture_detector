@@ -30,10 +30,9 @@ class ReviewScreen extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
               child: Text(
                 'ROSA Assessment',
-                style: Theme.of(context)
-                    .textTheme
-                    .headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.bold),
+                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
             Padding(
@@ -49,10 +48,7 @@ class ReviewScreen extends StatelessWidget {
                 children: [
                   _PhotoStrip(paths: photoPaths, scoredCount: scoredCount),
                   const SizedBox(height: 16),
-                  _AverageScoreCard(
-                    score: average,
-                    photoCount: scoredCount,
-                  ),
+                  _AverageScoreCard(score: average, photoCount: scoredCount),
                 ],
               ),
             ),
@@ -88,56 +84,55 @@ class _PhotoStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 220,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: paths.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 12),
-        itemBuilder: (context, index) {
-          return GestureDetector(
-            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: paths.asMap().entries.map((entry) {
+        final index = entry.key;
+        
+        return GestureDetector(
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
               builder: (_) => GalleryImageViewer(
                 images: paths.map((p) => FileImage(File(p))).toList(),
                 initial_index: index,
                 show_counter: true,
               ),
-            )),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Stack(
-                children: [
-                  Image.file(
-                    File(paths[index]),
-                    width: 150,
-                    height: 220,
-                    fit: BoxFit.cover,
-                  ),
-                  Positioned(
-                    top: 8,
-                    left: 8,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        index < scoredCount
-                            ? 'Photo ${index + 1}'
-                            : 'Front view',
-                        style:
-                            const TextStyle(color: Colors.white, fontSize: 13),
-                      ),
+            ),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: Stack(
+              children: [
+                Image.file(
+                  File(paths[index]),
+                  width: 150,
+                  height: 220,
+                  fit: BoxFit.cover,
+                ),
+                Positioned(
+                  top: 8,
+                  left: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      index < scoredCount ? 'Photo ${index + 1}' : 'Front view',
+                      style: const TextStyle(color: Colors.white, fontSize: 13),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          );
-        },
-      ),
+          ),
+        );
+      }).toList(),
     );
   }
 }
@@ -170,8 +165,9 @@ class _AverageScoreCard extends StatelessWidget {
             child: Row(
               children: [
                 Text(
-                  valid ? 'Average ROSA Score: $finalScore / 10'
-                        : 'Average ROSA Score: —',
+                  valid
+                      ? 'Average ROSA Score: $finalScore / 10'
+                      : 'Average ROSA Score: —',
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -182,7 +178,9 @@ class _AverageScoreCard extends StatelessWidget {
                 if (valid)
                   Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 3),
+                      horizontal: 10,
+                      vertical: 3,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.25),
                       borderRadius: BorderRadius.circular(12),
@@ -223,9 +221,7 @@ class _AverageScoreCard extends StatelessWidget {
                     icon: Icons.monitor,
                     label: 'Monitor',
                     sectionScore: score.monitor_area_score,
-                    chips: [
-                      _Chip('Neck', score.monitor_score),
-                    ],
+                    chips: [_Chip('Neck', score.monitor_score)],
                     chipColorFn: _subScoreColor,
                     sectionColorFn: _riskColor,
                   ),
@@ -249,13 +245,18 @@ class _AverageScoreCard extends StatelessWidget {
                     padding: const EdgeInsets.only(top: 10),
                     child: Row(
                       children: [
-                        Icon(Icons.info_outline,
-                            size: 15, color: Colors.grey[500]),
+                        Icon(
+                          Icons.info_outline,
+                          size: 15,
+                          color: Colors.grey[500],
+                        ),
                         const SizedBox(width: 6),
                         Text(
                           'Averaged from $photoCount captured photos',
-                          style:
-                              TextStyle(color: Colors.grey[600], fontSize: 12),
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 12,
+                          ),
                         ),
                       ],
                     ),
@@ -266,8 +267,10 @@ class _AverageScoreCard extends StatelessWidget {
           ] else
             const Padding(
               padding: EdgeInsets.all(16),
-              child: Text('Score unavailable',
-                  style: TextStyle(color: Colors.grey)),
+              child: Text(
+                'Score unavailable',
+                style: TextStyle(color: Colors.grey),
+              ),
             ),
         ],
       ),
@@ -317,18 +320,23 @@ class _SectionRow extends StatelessWidget {
       children: [
         Icon(icon, size: 18, color: Colors.grey[600]),
         const SizedBox(width: 6),
-        Text(label,
-            style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[800])),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: Colors.grey[800],
+          ),
+        ),
         const SizedBox(width: 6),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
           decoration: BoxDecoration(
             color: sectionColorFn(sectionScore).withOpacity(0.15),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: sectionColorFn(sectionScore).withOpacity(0.5)),
+            border: Border.all(
+              color: sectionColorFn(sectionScore).withOpacity(0.5),
+            ),
           ),
           child: Text(
             '$sectionScore',
@@ -340,25 +348,29 @@ class _SectionRow extends StatelessWidget {
           ),
         ),
         const Spacer(),
-        ...chips.map((c) => Padding(
-              padding: const EdgeInsets.only(left: 6),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                decoration: BoxDecoration(
-                  color: chipColorFn(c.value).withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: chipColorFn(c.value).withOpacity(0.5)),
-                ),
-                child: Text(
-                  '${c.label} ${c.value}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: chipColorFn(c.value),
-                  ),
+        ...chips.map(
+          (c) => Padding(
+            padding: const EdgeInsets.only(left: 6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+              decoration: BoxDecoration(
+                color: chipColorFn(c.value).withOpacity(0.15),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: chipColorFn(c.value).withOpacity(0.5),
                 ),
               ),
-            )),
+              child: Text(
+                '${c.label} ${c.value}',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: chipColorFn(c.value),
+                ),
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }

@@ -69,6 +69,9 @@ final class PoseDetectionViewController: UIViewController {
     // MARK: - ML
 
     private var poseLandmarker: PoseLandmarker?
+    /// IMAGE-mode hand landmarker — runs once on the captured FRONT still to overlay
+    /// finger/palm points. Never runs on live frames. Created when the front phase begins.
+    private var handLandmarker: HandLandmarker?
     private var yoloDetector: YoloDetector?
     private var poseTimestampMs = 0
 
@@ -95,7 +98,15 @@ final class PoseDetectionViewController: UIViewController {
     // premature capture while the holder is still walking the phone to the front.
     private let FRONT_VISIBILITY_THRESHOLD: Float = 0.5
     private let FRONT_READY_DELAY_MS: Double = 1500
+    // After the entry settle, face/shoulders/hands must stay visible for this many
+    // *consecutive* frames before the front photo is taken — any drop in visibility
+    // resets the count, so the holder must hold steady once in position.
+    private let FRONT_FRAMES_NEEDED = 30
     private var frontReadyEarliestAtMs: Double = 0
+    /// Pose landmark indices omitted in the front view (baked photo and live overlay):
+    /// face/eyes/ears/mouth (0...10), wrist/palm (15...22) — the hand landmarker
+    /// supplies those on the photo — and legs (25...32).
+    private let FRONT_SKELETON_EXCLUDE: Set<Int> = Set(0...10).union(Set(15...22)).union(Set(25...32))
 
     private var tiltIsOk = false
     private var rotationIsOk = false
@@ -305,6 +316,7 @@ final class PoseDetectionViewController: UIViewController {
             self.successCount = 0
             self.distanceIsOk = false
             self.poseLandmarker = nil
+            self.handLandmarker = nil
             self.landmarkSmoother.reset()
             self.legEstimator.reset()
             self.yoloDetector = YoloDetector()
@@ -321,6 +333,7 @@ final class PoseDetectionViewController: UIViewController {
                 }
                 self.overlayView.updateLandmarks([], imgWidth: 1, imgHeight: 1)
                 self.overlayView.setHeightGuide(.hidden)
+                self.overlayView.setExcludedIndices([])
                 self.overlayView.updateRosaAngles(nil)
                 self.updatePanel(lightOk: nil)
             }
@@ -345,6 +358,25 @@ final class PoseDetectionViewController: UIViewController {
             poseLandmarker = try PoseLandmarker(options: options)
         } catch {
             NSLog("Failed to create PoseLandmarker: \(error)")
+        }
+    }
+
+    /// Creates the IMAGE-mode hand landmarker if not already created. Only ever runs
+    /// once, on a single still, so it stays on CPU to avoid GPU contention with pose.
+    private func initializeHandLandmarker() {
+        if handLandmarker != nil { return }
+        guard let modelPath = Bundle.main.path(forResource: "hand_landmarker", ofType: "task") else {
+            NSLog("hand_landmarker.task not found in bundle")
+            return
+        }
+        let options = HandLandmarkerOptions()
+        options.baseOptions.modelAssetPath = modelPath
+        options.runningMode = .image
+        options.numHands = 2
+        do {
+            handLandmarker = try HandLandmarker(options: options)
+        } catch {
+            NSLog("Failed to create HandLandmarker: \(error)")
         }
     }
 
@@ -592,13 +624,28 @@ final class PoseDetectionViewController: UIViewController {
             DispatchQueue.main.async { self.updateFrontCue(frontVisible: frontVisible) }
             let nowMs = tSec * 1000
             if frontVisible && nowMs >= frontReadyEarliestAtMs {
+                // Capture once the condition has held for FRONT_FRAMES_NEEDED
+                // consecutive frames past the entry settle.
                 successCount += 1
-                if successCount >= SUCCESS_FRAMES_NEEDED {
+                if successCount >= FRONT_FRAMES_NEEDED {
                     successCount = 0
                     if let frame = lastFrameImage {
                         let captured = smoothed
+                        // Detect hands on the clean frame, then draw the finger/palm
+                        // overlay on top of the baked (blurred + skeleton) photo.
+                        let handResult = detectHands(frame)
                         let blurred = FaceBlurrer.blurFace(frame, landmarks: captured)
-                        let photo = bakeSkeletonOntoPhoto(blurred, landmarks: captured, angles: nil)
+                        // Front view is upper-body only — drop the leg landmarks
+                        // (knees/ankles/feet, indices 25+). Also drop the face/ear
+                        // points (0...10) — the face is blurred, so no face dots or
+                        // lines — and the pose wrist/palm points (15...22): the hand
+                        // landmarker supplies the wrist/finger detail, and we connect
+                        // the elbow straight to the hand's point 0 so the arm flows
+                        // seamlessly into it.
+                        let upperBody = Array(captured.prefix(25))
+                        let baked = bakeSkeletonOntoPhoto(blurred, landmarks: upperBody, angles: nil,
+                                                          excludeIndices: FRONT_SKELETON_EXCLUDE)
+                        let photo = drawHandsOntoPhoto(baked, handResult, poseLandmarks: captured)
                         capturedPhotos.append(photo)   // front photo: no score appended
                         let photos = capturedPhotos
                         let scores = capturedScores
@@ -610,6 +657,7 @@ final class PoseDetectionViewController: UIViewController {
                     }
                 }
             } else {
+                // Visibility dropped (or still in the entry settle) — reset the count.
                 successCount = 0
             }
         }
@@ -648,6 +696,7 @@ final class PoseDetectionViewController: UIViewController {
     private func pauseCameraPipeline() {
         session.stopRunning()
         poseLandmarker = nil
+        handLandmarker = nil
     }
 
     // =========================================================================
@@ -689,7 +738,8 @@ final class PoseDetectionViewController: UIViewController {
 
     private func bakeSkeletonOntoPhoto(_ photo: UIImage,
                                        landmarks: [LandmarkPoint],
-                                       angles: RosaAnglesCalculator.Angles?) -> UIImage {
+                                       angles: RosaAnglesCalculator.Angles?,
+                                       excludeIndices: Set<Int> = []) -> UIImage {
         guard let cg = photo.cgImage else { return photo }
         let w = CGFloat(cg.width)
         let h = CGFloat(cg.height)
@@ -702,6 +752,49 @@ final class PoseDetectionViewController: UIViewController {
             let ctx = rctx.cgContext
             photo.draw(in: CGRect(x: 0, y: 0, width: w, height: h))
             PoseRenderer.drawScene(in: ctx, landmarks: landmarks, angles: angles,
+                                   sx: { CGFloat($0) * w }, sy: { CGFloat($0) * h }, scale: bakeScale,
+                                   exclude: excludeIndices)
+        }
+    }
+
+    /// Runs the hand landmarker on a single still (IMAGE mode). Returns nil if the
+    /// landmarker isn't available or detection fails — the overlay is then skipped.
+    private func detectHands(_ image: UIImage) -> HandLandmarkerResult? {
+        guard let hl = handLandmarker, let mpImage = try? MPImage(uiImage: image) else { return nil }
+        do {
+            return try hl.detect(image: mpImage)
+        } catch {
+            NSLog("HandLandmarker detect failed: \(error)")
+            return nil
+        }
+    }
+
+    /// Converts a hand-landmarker result into normalised `LandmarkPoint` lists (one
+    /// per hand), the shape both the live overlay and the baked photo render.
+    private func handsToPoints(_ result: HandLandmarkerResult?) -> [[LandmarkPoint]] {
+        guard let hands = result?.landmarks else { return [] }
+        return hands.map { hand in hand.map { LandmarkPoint(x: $0.x, y: $0.y) } }
+    }
+
+    /// Draws the detected hands onto the photo via the shared renderer — same white
+    /// lines / green dots as the body skeleton, with each wrist joined to its nearest
+    /// elbow. `poseLandmarks` supplies the elbows. Returns the photo unchanged if no
+    /// hands found.
+    private func drawHandsOntoPhoto(_ photo: UIImage, _ result: HandLandmarkerResult?,
+                                    poseLandmarks: [LandmarkPoint]) -> UIImage {
+        let hands = handsToPoints(result)
+        guard !hands.isEmpty, let cg = photo.cgImage else { return photo }
+        let w = CGFloat(cg.width)
+        let h = CGFloat(cg.height)
+        let bakeScale = w / SKELETON_REFERENCE_WIDTH
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format)
+        return renderer.image { rctx in
+            let ctx = rctx.cgContext
+            photo.draw(in: CGRect(x: 0, y: 0, width: w, height: h))
+            PoseRenderer.drawHands(in: ctx, hands: hands, poseLandmarks: poseLandmarks,
                                    sx: { CGFloat($0) * w }, sy: { CGFloat($0) * h }, scale: bakeScale)
         }
     }
@@ -768,8 +861,13 @@ final class PoseDetectionViewController: UIViewController {
         frontReadyEarliestAtMs = CACurrentMediaTime() * 1000 + FRONT_READY_DELAY_MS
         landmarkSmoother.reset()
         legEstimator.reset()
+        // Prepare the hand landmarker now so it's ready to run on the front still.
+        initializeHandLandmarker()
         DispatchQueue.main.async {
             self.overlayView.setHeightGuide(.hidden)
+            // Live overlay mirrors the captured front photo: drop face/ears,
+            // wrist/palm and legs from the skeleton.
+            self.overlayView.setExcludedIndices(self.FRONT_SKELETON_EXCLUDE)
             // None of the side-view conditions apply to the front shot — hide them
             // all (the stack collapses) and keep only the repurposed Side→Front chip.
             for chip in [self.tvLightStatus, self.tvPersonStatus, self.tvMonitorStatus,

@@ -27,6 +27,7 @@
 		AE200000000000000000000B /* TiltMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE100000000000000000000B /* TiltMonitor.swift */; };
 		AE200000000000000000000C /* YoloDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE100000000000000000000C /* YoloDetector.swift */; };
 		AE200000000000000000000D /* pose_landmarker_full.task in Resources */ = {isa = PBXBuildFile; fileRef = AE100000000000000000000D /* pose_landmarker_full.task */; };
+		AE200000000000000000001A /* hand_landmarker.task in Resources */ = {isa = PBXBuildFile; fileRef = AE100000000000000000001A /* hand_landmarker.task */; };
 		AE200000000000000000000E /* yolov8n_float16.tflite in Resources */ = {isa = PBXBuildFile; fileRef = AE100000000000000000000E /* yolov8n_float16.tflite */; };
 /* End PBXBuildFile section */
 
@@ -82,6 +83,7 @@
 		AE100000000000000000000B /* TiltMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TiltMonitor.swift; sourceTree = "<group>"; };
 		AE100000000000000000000C /* YoloDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YoloDetector.swift; sourceTree = "<group>"; };
 		AE100000000000000000000D /* pose_landmarker_full.task */ = {isa = PBXFileReference; lastKnownFileType = file; path = pose_landmarker_full.task; sourceTree = "<group>"; };
+		AE100000000000000000001A /* hand_landmarker.task */ = {isa = PBXFileReference; lastKnownFileType = file; path = hand_landmarker.task; sourceTree = "<group>"; };
 		AE100000000000000000000E /* yolov8n_float16.tflite */ = {isa = PBXFileReference; lastKnownFileType = file; path = yolov8n_float16.tflite; sourceTree = "<group>"; };
 		AE100000000000000000000F /* TFLiteCAPI.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TFLiteCAPI.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -176,6 +178,7 @@
 			isa = PBXGroup;
 			children = (
 				AE100000000000000000000D /* pose_landmarker_full.task */,
+				AE100000000000000000001A /* hand_landmarker.task */,
 				AE100000000000000000000E /* yolov8n_float16.tflite */,
 			);
 			path = Models;
@@ -277,6 +280,7 @@
 				97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */,
 				97C146FC1CF9000F007C117D /* Main.storyboard in Resources */,
 				AE200000000000000000000D /* pose_landmarker_full.task in Resources */,
+				AE200000000000000000001A /* hand_landmarker.task in Resources */,
 				AE200000000000000000000E /* yolov8n_float16.tflite in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

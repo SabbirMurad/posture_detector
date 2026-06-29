@@ -15,6 +15,9 @@ final class PoseOverlayView: UIView {
     private var imageHeight: CGFloat = 1
     private var heightGuideState: HeightGuideState = .hidden
     private var rosaAngles: RosaAnglesCalculator.Angles?
+    // Landmark indices to omit (connections + dots). Empty for the side shots;
+    // set during the front phase to mirror the captured photo.
+    private var excludedIndices: Set<Int> = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -39,6 +42,12 @@ final class PoseOverlayView: UIView {
     func setHeightGuide(_ state: HeightGuideState) {
         if heightGuideState == state { return }
         heightGuideState = state
+        setNeedsDisplay()
+    }
+
+    func setExcludedIndices(_ indices: Set<Int>) {
+        if excludedIndices == indices { return }
+        excludedIndices = indices
         setNeedsDisplay()
     }
 
@@ -99,7 +108,8 @@ final class PoseOverlayView: UIView {
         // the display density to match Android's on-screen proportions (and the
         // baked-photo path, which does the analogous conversion via `bakeScale`).
         let renderScale = 1 / max(traitCollection.displayScale, 1)
-        PoseRenderer.drawScene(in: ctx, landmarks: landmarks, angles: rosaAngles, sx: sx, sy: sy, scale: renderScale)
+        PoseRenderer.drawScene(in: ctx, landmarks: landmarks, angles: rosaAngles, sx: sx, sy: sy,
+                               scale: renderScale, exclude: excludedIndices)
     }
 
     static let poseConnections = PoseRenderer.poseConnections
@@ -122,6 +132,16 @@ enum PoseRenderer {
         (24, 26), (26, 28), (28, 30), (30, 32), (32, 28),
     ]
 
+    /// MediaPipe's canonical 21-point hand skeleton: thumb, four fingers, palm.
+    static let handConnections: [(Int, Int)] = [
+        (0, 1), (1, 2), (2, 3), (3, 4),         // thumb
+        (0, 5), (5, 6), (6, 7), (7, 8),         // index
+        (5, 9), (9, 10), (10, 11), (11, 12),    // middle
+        (9, 13), (13, 14), (14, 15), (15, 16),  // ring
+        (13, 17), (17, 18), (18, 19), (19, 20), // pinky
+        (0, 17),                                // palm base
+    ]
+
     private static let arcColor = UIColor(red: 0xFF / 255, green: 0x57 / 255, blue: 0x22 / 255, alpha: 1)
     private static let vertRefColor = UIColor(red: 255 / 255, green: 87 / 255, blue: 34 / 255, alpha: 200 / 255)
     private static let estimatedDotColor = UIColor(red: 0, green: 220 / 255, blue: 0, alpha: 160 / 255)
@@ -134,9 +154,12 @@ enum PoseRenderer {
                           angles: RosaAnglesCalculator.Angles?,
                           sx: (Float) -> CGFloat,
                           sy: (Float) -> CGFloat,
-                          scale: CGFloat) {
+                          scale: CGFloat,
+                          exclude: Set<Int> = []) {
         // ── Skeleton connections ───────────────────────────────────────────────
-        for (start, end) in poseConnections where start < landmarks.count && end < landmarks.count {
+        for (start, end) in poseConnections
+        where start < landmarks.count && end < landmarks.count
+            && !exclude.contains(start) && !exclude.contains(end) {
             let s = landmarks[start], e = landmarks[end]
             let estimated = s.estimated || e.estimated
             ctx.setStrokeColor(UIColor.white.cgColor)
@@ -149,7 +172,7 @@ enum PoseRenderer {
         ctx.setLineDash(phase: 0, lengths: [])
 
         // ── Landmark dots ──────────────────────────────────────────────────────
-        for lm in landmarks {
+        for (i, lm) in landmarks.enumerated() where !exclude.contains(i) {
             let r = (lm.estimated ? 5 : 7) * scale
             ctx.setFillColor((lm.estimated ? estimatedDotColor : UIColor.green).cgColor)
             ctx.fillEllipse(in: CGRect(x: sx(lm.x) - r, y: sy(lm.y) - r, width: 2 * r, height: 2 * r))
@@ -158,6 +181,49 @@ enum PoseRenderer {
         // ── ROSA angle arcs ────────────────────────────────────────────────────
         if let ra = angles, landmarks.count >= 29 {
             drawAngles(in: ctx, landmarks: landmarks, angles: ra, sx: sx, sy: sy, scale: scale)
+        }
+    }
+
+    /// Draws the detected hands and each hand's wrist→nearest-elbow connector, using
+    /// the same white lines / green dots as the body skeleton so the hand reads as a
+    /// continuation of the arm. Shared by the live overlay and the baked photo.
+    /// `poseLandmarks` supplies the elbows (13/14).
+    static func drawHands(in ctx: CGContext,
+                          hands: [[LandmarkPoint]],
+                          poseLandmarks: [LandmarkPoint],
+                          sx: (Float) -> CGFloat,
+                          sy: (Float) -> CGFloat,
+                          scale: CGFloat) {
+        var elbows: [LandmarkPoint] = []
+        if poseLandmarks.count > 13 { elbows.append(poseLandmarks[13]) }
+        if poseLandmarks.count > 14 { elbows.append(poseLandmarks[14]) }
+
+        ctx.setLineDash(phase: 0, lengths: [])
+        for hand in hands {
+            // Connector: wrist (point 0) → nearest elbow.
+            if let h0 = hand.first,
+               let nearest = elbows.min(by: {
+                   hypot(sx($0.x) - sx(h0.x), sy($0.y) - sy(h0.y))
+                   < hypot(sx($1.x) - sx(h0.x), sy($1.y) - sy(h0.y))
+               }) {
+                ctx.setStrokeColor(UIColor.white.cgColor)
+                ctx.setLineWidth(6 * scale)
+                ctx.move(to: CGPoint(x: sx(nearest.x), y: sy(nearest.y)))
+                ctx.addLine(to: CGPoint(x: sx(h0.x), y: sy(h0.y)))
+                ctx.strokePath()
+            }
+            ctx.setStrokeColor(UIColor.white.cgColor)
+            ctx.setLineWidth(6 * scale)
+            for (start, end) in handConnections where start < hand.count && end < hand.count {
+                ctx.move(to: CGPoint(x: sx(hand[start].x), y: sy(hand[start].y)))
+                ctx.addLine(to: CGPoint(x: sx(hand[end].x), y: sy(hand[end].y)))
+                ctx.strokePath()
+            }
+            ctx.setFillColor(UIColor.green.cgColor)
+            let r = 7 * scale
+            for lm in hand {
+                ctx.fillEllipse(in: CGRect(x: sx(lm.x) - r, y: sy(lm.y) - r, width: 2 * r, height: 2 * r))
+            }
         }
     }
 
