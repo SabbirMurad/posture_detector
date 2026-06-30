@@ -167,6 +167,13 @@ class PoseDetectionActivity : AppCompatActivity() {
     private val FRONT_FRAMES_NEEDED = 30
     @Volatile private var frontReadyEarliestAtMs = 0L
 
+    // Phone-steadiness gate for the front shot: dynamic acceleration (m/s²) above
+    // PHONE_MOTION_MAX counts as movement, and the capture waits until the phone has
+    // been quiet for PHONE_STEADY_SETTLE_MS afterwards.
+    private val PHONE_MOTION_MAX = 0.8
+    private val PHONE_STEADY_SETTLE_MS = 400L
+    @Volatile private var lastShakeAtMs = 0L
+
     // Hip spread / torso height ratio threshold for side-view detection.
     // Accepts camera within ~30° of true side view; unaffected by torso lean.
     private val SIDE_VIEW_THRESHOLD = 0.35f
@@ -228,11 +235,14 @@ class PoseDetectionActivity : AppCompatActivity() {
         flashOverlay            = findViewById(R.id.flashOverlay)
         cameraLevel             = findViewById(R.id.cameraLevel)
 
-        tiltMonitor = TiltMonitor(this) { tiltAngle, rollAngle, pitchAngle ->
+        tiltMonitor = TiltMonitor(this) { tiltAngle, rollAngle, pitchAngle, motion ->
             val tOk = TiltMonitor.isTiltAcceptable(tiltAngle)
             val rOk = TiltMonitor.isRollAcceptable(rollAngle)
             tiltIsOk     = tOk
             rotationIsOk = rOk
+            // Latch the last time the phone was shaken/moved; the front capture waits
+            // for a quiet window after this before firing.
+            if (motion > PHONE_MOTION_MAX) lastShakeAtMs = android.os.SystemClock.elapsedRealtime()
             cameraLevel.update(rollAngle, pitchAngle)
 
             val tiltStr = "%.1f".format(tiltAngle)
@@ -298,6 +308,7 @@ class PoseDetectionActivity : AppCompatActivity() {
             poseOverlayView.updateLandmarks(emptyList(), 1, 1)
             poseOverlayView.setHeightGuide(PoseOverlayView.HeightGuideState.HIDDEN)
             poseOverlayView.setExcludedIndices(emptySet())
+            poseOverlayView.setShowShoulderAngles(false)
             updatePanel(lightOk = null)
             poseOverlayView.updateRosaAngles(null)
         }
@@ -415,16 +426,20 @@ class PoseDetectionActivity : AppCompatActivity() {
                 }
 
                 // ── Front-view capture (4th shot, after the 3 side shots) ─────
-                // Condition: face/shoulders/hands visible. No tilt/level gate —
-                // the front shot doesn't need the phone held perfectly upright.
-                // Uses the raw (un-leg-estimated) smoothed landmarks and bakes the
-                // skeleton with no ROSA arcs. The photo carries no score.
+                // Condition: face/shoulders/hands visible AND the phone is not
+                // rotated (roll OK) AND the phone is held steady (no recent shake).
+                // No tilt gate — the front shot doesn't need the phone held perfectly
+                // upright, only un-rotated and still. Uses the raw
+                // (un-leg-estimated) smoothed landmarks and bakes the skeleton with
+                // no ROSA arcs. The photo carries no score.
                 if (currentState == AppState.FRONT) {
                     val raw = landmarks.getOrNull(0)
                     val frontVisible = raw != null && frontLandmarksVisible(raw)
-                    runOnUiThread { updateFrontCue(frontVisible) }
                     val nowF = android.os.SystemClock.elapsedRealtime()
-                    if (frontVisible && nowF >= frontReadyEarliestAtMs) {
+                    val phoneSteady = nowF - lastShakeAtMs >= PHONE_STEADY_SETTLE_MS
+                    val frontOk = frontVisible && rotationIsOk && phoneSteady
+                    runOnUiThread { updateFrontCue(frontVisible, rotationIsOk, phoneSteady) }
+                    if (frontOk && nowF >= frontReadyEarliestAtMs) {
                         // Capture once the condition has held for FRONT_FRAMES_NEEDED
                         // consecutive frames past the entry settle.
                         if (successCount.incrementAndGet() >= FRONT_FRAMES_NEEDED) {
@@ -449,6 +464,7 @@ class PoseDetectionActivity : AppCompatActivity() {
                                 val photo   = bakeSkeletonOntoPhoto(
                                     blurred, upperBody, null, excludeIndices = FRONT_SKELETON_EXCLUDE)
                                 drawHandsOntoPhoto(photo, handResult, captured)
+                                drawShoulderAnglesOntoPhoto(photo, captured)
                                 capturedPhotos.add(photo)   // front photo: no score appended
                                 runOnUiThread {
                                     triggerCaptureFlash()
@@ -1004,6 +1020,31 @@ class PoseDetectionActivity : AppCompatActivity() {
     private fun handsToPoints(result: HandLandmarkerResult?): List<List<LandmarkPoint>> =
         result?.landmarks()?.map { hand -> hand.map { LandmarkPoint(it.x(), it.y()) } } ?: emptyList()
 
+    /** Bakes the front-view shoulder verticals + shoulder→elbow angle onto the photo,
+     *  using the same dashed-orange reference / arc / label style as the ROSA arcs. */
+    private fun drawShoulderAnglesOntoPhoto(photo: Bitmap, landmarks: List<LandmarkPoint>) {
+        val canvas = Canvas(photo)
+        val w = photo.width.toFloat()
+        val h = photo.height.toFloat()
+        val bakeScale = w / SKELETON_REFERENCE_WIDTH
+
+        val vertPaint = Paint().apply {
+            color = Color.argb(200, 255, 87, 34); style = Paint.Style.STROKE
+            strokeWidth = 3f * bakeScale; isAntiAlias = true
+            pathEffect = DashPathEffect(floatArrayOf(12f * bakeScale, 8f * bakeScale), 0f)
+        }
+        val arcPaint = Paint().apply {
+            color = Color.parseColor("#FF5722"); style = Paint.Style.STROKE
+            strokeWidth = 4f * bakeScale; isAntiAlias = true
+        }
+        val labelPaint = Paint().apply {
+            color = Color.parseColor("#FF5722"); textSize = 36f * bakeScale; isAntiAlias = true
+            typeface = android.graphics.Typeface.DEFAULT_BOLD; textAlign = Paint.Align.CENTER
+        }
+        PoseOverlayView.drawShoulderVerticals(canvas, landmarks,
+            { x -> x * w }, { y -> y * h }, vertPaint, arcPaint, labelPaint)
+    }
+
     /** Camera-shutter flash — brief white flash so the phone holder feels each shot register. */
     private fun triggerCaptureFlash() {
         flashOverlay.visibility = View.VISIBLE
@@ -1053,8 +1094,9 @@ class PoseDetectionActivity : AppCompatActivity() {
         runOnUiThread {
             poseOverlayView.setHeightGuide(PoseOverlayView.HeightGuideState.HIDDEN)
             // Live overlay mirrors the captured front photo: drop face/ears,
-            // wrist/palm and legs from the skeleton.
+            // wrist/palm and legs from the skeleton, and show the shoulder verticals.
             poseOverlayView.setExcludedIndices(FRONT_SKELETON_EXCLUDE)
+            poseOverlayView.setShowShoulderAngles(true)
             // None of the side-view conditions apply to the front shot — hide them
             // all and keep only the repurposed Side→Front chip.
             tvLightStatus.visibility    = View.GONE
@@ -1079,16 +1121,24 @@ class PoseDetectionActivity : AppCompatActivity() {
     }
 
     /** Drives the capture banner + (repurposed) side chip during the front phase. */
-    private fun updateFrontCue(frontVisible: Boolean) {
+    private fun updateFrontCue(frontVisible: Boolean, rotationOk: Boolean, phoneSteady: Boolean) {
         tvCaptureStatus.visibility = View.VISIBLE
         val settling = android.os.SystemClock.elapsedRealtime() < frontReadyEarliestAtMs
         tvCaptureStatus.text = when {
-            settling      -> "Move to the FRONT of the person, behind the monitor"
-            frontVisible  -> "Hold steady — capturing front photo…"
-            else          -> "Show the person's face, shoulders and hands"
+            settling         -> "Move to the FRONT of the person, behind the monitor"
+            !frontVisible    -> "Show the person's face, shoulders and hands"
+            !rotationOk      -> "Straighten the phone — it's rotated"
+            !phoneSteady     -> "Hold the phone still"
+            else             -> "Hold steady — capturing front photo…"
         }
-        tvSideViewStatus.setTextColor(if (frontVisible) COLOR_DETECTED else COLOR_NOT_DETECTED)
-        tvSideViewStatus.text = if (frontVisible) "● Front  OK" else "● Front  Face/shoulders/hands"
+        val ok = frontVisible && rotationOk && phoneSteady
+        tvSideViewStatus.setTextColor(if (ok) COLOR_DETECTED else COLOR_NOT_DETECTED)
+        tvSideViewStatus.text = when {
+            !frontVisible -> "● Front  Face/shoulders/hands"
+            !rotationOk   -> "● Front  Straighten phone"
+            !phoneSteady  -> "● Front  Hold still"
+            else          -> "● Front  OK"
+        }
     }
 
     private fun setupEdgeToEdge() {

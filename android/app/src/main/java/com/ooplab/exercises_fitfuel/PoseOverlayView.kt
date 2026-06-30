@@ -61,6 +61,9 @@ class PoseOverlayView @JvmOverloads constructor(
     // shots (full skeleton); set during the front phase to mirror the captured
     // photo (face/ears, wrist/palm and legs dropped).
     private var excludedIndices: Set<Int> = emptySet()
+    // Front-view only: vertical reference line through each shoulder + the
+    // shoulder→elbow angle.
+    private var showShoulderAngles = false
 
     fun updateLandmarks(newLandmarks: List<LandmarkPoint>, imgWidth: Int, imgHeight: Int) {
         landmarks = newLandmarks
@@ -72,6 +75,12 @@ class PoseOverlayView @JvmOverloads constructor(
     fun setExcludedIndices(indices: Set<Int>) {
         if (excludedIndices == indices) return
         excludedIndices = indices
+        postInvalidate()
+    }
+
+    fun setShowShoulderAngles(show: Boolean) {
+        if (showShoulderAngles == show) return
+        showShoulderAngles = show
         postInvalidate()
     }
 
@@ -143,6 +152,11 @@ class PoseOverlayView @JvmOverloads constructor(
         if (ra != null && landmarks.size >= 29) {
             drawAngles(canvas, landmarks, ra, ::sx, ::sy, arcPaint, vertRefPaint, angleLabelPaint)
         }
+
+        // ── Front-view shoulder verticals + angle ────────────────────────────────
+        if (showShoulderAngles) {
+            drawShoulderVerticals(canvas, landmarks, ::sx, ::sy, vertRefPaint, arcPaint, angleLabelPaint)
+        }
     }
 
     companion object {
@@ -202,6 +216,38 @@ class PoseOverlayView @JvmOverloads constructor(
                     }
                 }
                 for (lm in hand) canvas.drawCircle(sx(lm.x), sy(lm.y), dotRadius, dotPaint)
+            }
+        }
+
+        /** Draws a vertical dotted reference line through each shoulder (11/12) and
+         *  labels the angle between that vertical and the shoulder→elbow line
+         *  (11→13, 12→14). Front-view only. Shared by the live overlay and the baked
+         *  photo so both look identical. */
+        fun drawShoulderVerticals(
+            canvas: Canvas,
+            landmarks: List<LandmarkPoint>,
+            sx: (Float) -> Float,
+            sy: (Float) -> Float,
+            vertPaint: Paint,
+            arcPaint: Paint,
+            labelPaint: Paint,
+        ) {
+            for ((shIdx, elIdx) in listOf(11 to 13, 12 to 14)) {
+                if (shIdx >= landmarks.size || elIdx >= landmarks.size) continue
+                val shX = sx(landmarks[shIdx].x); val shY = sy(landmarks[shIdx].y)
+                val elX = sx(landmarks[elIdx].x); val elY = sy(landmarks[elIdx].y)
+                val dx = elX - shX; val dy = elY - shY
+                val len = hypot(dx.toDouble(), dy.toDouble()).toFloat()
+                if (len < 1f) continue
+
+                // Vertical dotted line through the shoulder.
+                canvas.drawLine(shX, shY - 0.4f * len, shX, shY + len, vertPaint)
+
+                // Angle arc between the shoulder→elbow line and the straight-down
+                // vertical — same arc + label style as the side-view ROSA angles.
+                val angleDeg = Math.toDegrees(acos((dy / len).toDouble())).toFloat()
+                drawArc(canvas, elX, elY, shX, shY, shX, shY + len,
+                    "${angleDeg.roundToInt()}°", len * 0.3f, arcPaint, labelPaint)
             }
         }
 

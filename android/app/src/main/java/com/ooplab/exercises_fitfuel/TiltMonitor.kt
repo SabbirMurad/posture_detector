@@ -9,7 +9,7 @@ import kotlin.math.*
 
 class TiltMonitor(
     context: Context,
-    private val onAnglesChanged: (tiltAngle: Double, rollAngle: Double, pitchAngle: Double) -> Unit,
+    private val onAnglesChanged: (tiltAngle: Double, rollAngle: Double, pitchAngle: Double, motion: Double) -> Unit,
 ) : SensorEventListener {
 
     private val sensorManager =
@@ -38,6 +38,12 @@ class TiltMonitor(
             fz += ALPHA * (z - fz)
         }
 
+        // Dynamic (non-gravity) acceleration = raw reading minus the filtered gravity
+        // estimate. ~0 when the phone is held still; spikes when it's moved/shaken.
+        // Units: m/s² (Android accelerometer's native unit).
+        val rx = x - fx; val ry = y - fy; val rz = z - fz
+        val motion = sqrt((rx * rx + ry * ry + rz * rz).toDouble())
+
         // Inclination from horizontal: 0° = lying flat, 90° = perfectly upright portrait
         val tilt = atan2(fy.toDouble(), sqrt((fx * fx + fz * fz).toDouble())) * (180.0 / PI)
 
@@ -51,7 +57,7 @@ class TiltMonitor(
         // indicator's vertical offset. fz grows as the phone leans toward/away.
         val pitch = atan2(fz.toDouble(), fy.toDouble()) * (180.0 / PI)
 
-        onAnglesChanged(tilt, roll, pitch)
+        onAnglesChanged(tilt, roll, pitch, motion)
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}

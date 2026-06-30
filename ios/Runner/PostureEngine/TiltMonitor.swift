@@ -19,12 +19,12 @@ final class TiltMonitor {
     private static let ALPHA: Float = 0.1
 
     private let motionManager = CMMotionManager()
-    private let onAnglesChanged: (_ tiltAngle: Double, _ rollAngle: Double, _ pitchAngle: Double) -> Void
+    private let onAnglesChanged: (_ tiltAngle: Double, _ rollAngle: Double, _ pitchAngle: Double, _ motion: Double) -> Void
 
     private var fx: Float = 0, fy: Float = 0, fz: Float = 0
     private var initialized = false
 
-    init(onAnglesChanged: @escaping (_ tiltAngle: Double, _ rollAngle: Double, _ pitchAngle: Double) -> Void) {
+    init(onAnglesChanged: @escaping (_ tiltAngle: Double, _ rollAngle: Double, _ pitchAngle: Double, _ motion: Double) -> Void) {
         self.onAnglesChanged = onAnglesChanged
     }
 
@@ -51,6 +51,12 @@ final class TiltMonitor {
             fz += Self.ALPHA * (z - fz)
         }
 
+        // Dynamic (non-gravity) acceleration = raw minus filtered gravity. ~0 when
+        // the phone is held still; spikes when moved/shaken. CoreMotion reports
+        // acceleration in g, so ×9.81 to match Android's m/s² units.
+        let rx = x - fx, ry = y - fy, rz = z - fz
+        let motion = Double((rx * rx + ry * ry + rz * rz).squareRoot()) * 9.81
+
         // Inclination from horizontal: 0° = lying flat, 90° = perfectly upright portrait
         let tilt = atan2(Double(fy), Double((fx * fx + fz * fz).squareRoot())) * (180.0 / .pi)
         // Lateral roll: when upright fy ≈ g and fx ≈ 0; tilting left/right shifts fx.
@@ -59,6 +65,6 @@ final class TiltMonitor {
         // indicator's vertical offset. fz grows as the phone leans toward/away.
         let pitch = atan2(Double(fz), Double(fy)) * (180.0 / .pi)
 
-        onAnglesChanged(tilt, roll, pitch)
+        onAnglesChanged(tilt, roll, pitch, motion)
     }
 }

@@ -103,6 +103,13 @@ final class PoseDetectionViewController: UIViewController {
     // resets the count, so the holder must hold steady once in position.
     private let FRONT_FRAMES_NEEDED = 30
     private var frontReadyEarliestAtMs: Double = 0
+
+    // Phone-steadiness gate for the front shot: dynamic acceleration (m/s²) above
+    // PHONE_MOTION_MAX counts as movement, and the capture waits until the phone has
+    // been quiet for PHONE_STEADY_SETTLE_MS afterwards.
+    private let PHONE_MOTION_MAX: Double = 0.8
+    private let PHONE_STEADY_SETTLE_MS: Double = 400
+    private var lastShakeAtMs: Double = 0
     /// Pose landmark indices omitted in the front view (baked photo and live overlay):
     /// face/eyes/ears/mouth (0...10), wrist/palm (15...22) — the hand landmarker
     /// supplies those on the photo — and legs (25...32).
@@ -153,8 +160,8 @@ final class PoseDetectionViewController: UIViewController {
         view.backgroundColor = UIColor(white: 24.0 / 255.0, alpha: 1)
         buildUI()
 
-        tiltMonitor = TiltMonitor { [weak self] tiltAngle, rollAngle, pitchAngle in
-            self?.handleTilt(tiltAngle: tiltAngle, rollAngle: rollAngle, pitchAngle: pitchAngle)
+        tiltMonitor = TiltMonitor { [weak self] tiltAngle, rollAngle, pitchAngle, motion in
+            self?.handleTilt(tiltAngle: tiltAngle, rollAngle: rollAngle, pitchAngle: pitchAngle, motion: motion)
         }
 
         captureQueue.async { [weak self] in
@@ -334,6 +341,7 @@ final class PoseDetectionViewController: UIViewController {
                 self.overlayView.updateLandmarks([], imgWidth: 1, imgHeight: 1)
                 self.overlayView.setHeightGuide(.hidden)
                 self.overlayView.setExcludedIndices([])
+                self.overlayView.setShowShoulderAngles(false)
                 self.overlayView.updateRosaAngles(nil)
                 self.updatePanel(lightOk: nil)
             }
@@ -621,9 +629,14 @@ final class PoseDetectionViewController: UIViewController {
         // ROSA arcs. The photo carries no score.
         if currentState == .front {
             let frontVisible = frontLandmarksVisible(rawLandmarks)
-            DispatchQueue.main.async { self.updateFrontCue(frontVisible: frontVisible) }
             let nowMs = tSec * 1000
-            if frontVisible && nowMs >= frontReadyEarliestAtMs {
+            let phoneSteady = nowMs - lastShakeAtMs >= PHONE_STEADY_SETTLE_MS
+            let frontOk = frontVisible && rotationIsOk && phoneSteady
+            DispatchQueue.main.async {
+                self.updateFrontCue(frontVisible: frontVisible, rotationOk: self.rotationIsOk,
+                                    phoneSteady: phoneSteady)
+            }
+            if frontOk && nowMs >= frontReadyEarliestAtMs {
                 // Capture once the condition has held for FRONT_FRAMES_NEEDED
                 // consecutive frames past the entry settle.
                 successCount += 1
@@ -645,7 +658,8 @@ final class PoseDetectionViewController: UIViewController {
                         let upperBody = Array(captured.prefix(25))
                         let baked = bakeSkeletonOntoPhoto(blurred, landmarks: upperBody, angles: nil,
                                                           excludeIndices: FRONT_SKELETON_EXCLUDE)
-                        let photo = drawHandsOntoPhoto(baked, handResult, poseLandmarks: captured)
+                        let withHands = drawHandsOntoPhoto(baked, handResult, poseLandmarks: captured)
+                        let photo = drawShoulderAnglesOntoPhoto(withHands, poseLandmarks: captured)
                         capturedPhotos.append(photo)   // front photo: no score appended
                         let photos = capturedPhotos
                         let scores = capturedScores
@@ -716,12 +730,15 @@ final class PoseDetectionViewController: UIViewController {
     // Tilt
     // =========================================================================
 
-    private func handleTilt(tiltAngle: Double, rollAngle: Double, pitchAngle: Double) {
+    private func handleTilt(tiltAngle: Double, rollAngle: Double, pitchAngle: Double, motion: Double) {
         let tOk = TiltMonitor.isTiltAcceptable(tiltAngle)
         let rOk = TiltMonitor.isRollAcceptable(rollAngle)
         captureQueue.async {
             self.tiltIsOk = tOk
             self.rotationIsOk = rOk
+            // Latch the last time the phone was moved/shaken; the front capture waits
+            // for a quiet window after this before firing.
+            if motion > self.PHONE_MOTION_MAX { self.lastShakeAtMs = CACurrentMediaTime() * 1000 }
         }
         levelView.update(roll: rollAngle, pitch: pitchAngle)
         tvTiltStatus.textColor = tOk ? colorDetected : colorNotDetected
@@ -799,6 +816,24 @@ final class PoseDetectionViewController: UIViewController {
         }
     }
 
+    /// Bakes the front-view shoulder verticals + shoulder→elbow angle onto the photo.
+    private func drawShoulderAnglesOntoPhoto(_ photo: UIImage, poseLandmarks: [LandmarkPoint]) -> UIImage {
+        guard let cg = photo.cgImage else { return photo }
+        let w = CGFloat(cg.width)
+        let h = CGFloat(cg.height)
+        let bakeScale = w / SKELETON_REFERENCE_WIDTH
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format)
+        return renderer.image { rctx in
+            let ctx = rctx.cgContext
+            photo.draw(in: CGRect(x: 0, y: 0, width: w, height: h))
+            PoseRenderer.drawShoulderVerticals(in: ctx, landmarks: poseLandmarks,
+                                               sx: { CGFloat($0) * w }, sy: { CGFloat($0) * h }, scale: bakeScale)
+        }
+    }
+
     private func finishWithCapturedPhotos(_ photos: [UIImage], scores: [RosaScorer.Result?]) {
         let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("posture_photos")
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
@@ -866,8 +901,9 @@ final class PoseDetectionViewController: UIViewController {
         DispatchQueue.main.async {
             self.overlayView.setHeightGuide(.hidden)
             // Live overlay mirrors the captured front photo: drop face/ears,
-            // wrist/palm and legs from the skeleton.
+            // wrist/palm and legs from the skeleton, and show the shoulder verticals.
             self.overlayView.setExcludedIndices(self.FRONT_SKELETON_EXCLUDE)
+            self.overlayView.setShowShoulderAngles(true)
             // None of the side-view conditions apply to the front shot — hide them
             // all (the stack collapses) and keep only the repurposed Side→Front chip.
             for chip in [self.tvLightStatus, self.tvPersonStatus, self.tvMonitorStatus,
@@ -890,18 +926,31 @@ final class PoseDetectionViewController: UIViewController {
     }
 
     /// Drives the capture banner + (repurposed) side chip during the front phase.
-    private func updateFrontCue(frontVisible: Bool) {
+    private func updateFrontCue(frontVisible: Bool, rotationOk: Bool, phoneSteady: Bool) {
         tvCaptureStatus.isHidden = false
         let settling = CACurrentMediaTime() * 1000 < frontReadyEarliestAtMs
         if settling {
             tvCaptureStatus.text = "Move to the FRONT of the person, behind the monitor"
-        } else if frontVisible {
-            tvCaptureStatus.text = "Hold steady — capturing front photo…"
-        } else {
+        } else if !frontVisible {
             tvCaptureStatus.text = "Show the person's face, shoulders and hands"
+        } else if !rotationOk {
+            tvCaptureStatus.text = "Straighten the phone — it's rotated"
+        } else if !phoneSteady {
+            tvCaptureStatus.text = "Hold the phone still"
+        } else {
+            tvCaptureStatus.text = "Hold steady — capturing front photo…"
         }
-        tvSideViewStatus.textColor = frontVisible ? colorDetected : colorNotDetected
-        tvSideViewStatus.text = frontVisible ? "● Front  OK" : "● Front  Face/shoulders/hands"
+        let ok = frontVisible && rotationOk && phoneSteady
+        tvSideViewStatus.textColor = ok ? colorDetected : colorNotDetected
+        if !frontVisible {
+            tvSideViewStatus.text = "● Front  Face/shoulders/hands"
+        } else if !rotationOk {
+            tvSideViewStatus.text = "● Front  Straighten phone"
+        } else if !phoneSteady {
+            tvSideViewStatus.text = "● Front  Hold still"
+        } else {
+            tvSideViewStatus.text = "● Front  OK"
+        }
     }
 
     // =========================================================================

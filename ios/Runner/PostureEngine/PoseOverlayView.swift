@@ -18,6 +18,9 @@ final class PoseOverlayView: UIView {
     // Landmark indices to omit (connections + dots). Empty for the side shots;
     // set during the front phase to mirror the captured photo.
     private var excludedIndices: Set<Int> = []
+    // Front-view only: vertical reference line through each shoulder + the
+    // shoulder→elbow angle.
+    private var showShoulderAngles = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -48,6 +51,12 @@ final class PoseOverlayView: UIView {
     func setExcludedIndices(_ indices: Set<Int>) {
         if excludedIndices == indices { return }
         excludedIndices = indices
+        setNeedsDisplay()
+    }
+
+    func setShowShoulderAngles(_ show: Bool) {
+        if showShoulderAngles == show { return }
+        showShoulderAngles = show
         setNeedsDisplay()
     }
 
@@ -110,6 +119,10 @@ final class PoseOverlayView: UIView {
         let renderScale = 1 / max(traitCollection.displayScale, 1)
         PoseRenderer.drawScene(in: ctx, landmarks: landmarks, angles: rosaAngles, sx: sx, sy: sy,
                                scale: renderScale, exclude: excludedIndices)
+        if showShoulderAngles {
+            PoseRenderer.drawShoulderVerticals(in: ctx, landmarks: landmarks, sx: sx, sy: sy,
+                                               scale: renderScale)
+        }
     }
 
     static let poseConnections = PoseRenderer.poseConnections
@@ -224,6 +237,36 @@ enum PoseRenderer {
             for lm in hand {
                 ctx.fillEllipse(in: CGRect(x: sx(lm.x) - r, y: sy(lm.y) - r, width: 2 * r, height: 2 * r))
             }
+        }
+    }
+
+    /// Draws a vertical dotted reference line through each shoulder (11/12) and labels
+    /// the angle between that vertical and the shoulder→elbow line (11→13, 12→14).
+    /// Front-view only. Shared by the live overlay and the baked photo.
+    static func drawShoulderVerticals(in ctx: CGContext,
+                                      landmarks: [LandmarkPoint],
+                                      sx: (Float) -> CGFloat,
+                                      sy: (Float) -> CGFloat,
+                                      scale: CGFloat) {
+        let textSize = 36 * scale
+        for (shIdx, elIdx) in [(11, 13), (12, 14)] {
+            guard shIdx < landmarks.count, elIdx < landmarks.count else { continue }
+            let shX = sx(landmarks[shIdx].x), shY = sy(landmarks[shIdx].y)
+            let elX = sx(landmarks[elIdx].x), elY = sy(landmarks[elIdx].y)
+            let dx = elX - shX, dy = elY - shY
+            let len = hypot(dx, dy)
+            if len < 1 { continue }
+
+            // Vertical dotted line through the shoulder.
+            strokeVertRef(ctx, from: CGPoint(x: shX, y: shY - 0.4 * len),
+                          to: CGPoint(x: shX, y: shY + len), scale: scale)
+
+            // Angle arc between the shoulder→elbow line and the straight-down vertical
+            // — same arc + label style as the side-view ROSA angles.
+            let angleDeg = acos(dy / len) * 180 / .pi
+            drawArc(ctx, p1: CGPoint(x: elX, y: elY), v: CGPoint(x: shX, y: shY),
+                    p2: CGPoint(x: shX, y: shY + len), text: String(format: "%.0f°", angleDeg),
+                    radius: len * 0.3, scale: scale, textSize: textSize)
         }
     }
 
