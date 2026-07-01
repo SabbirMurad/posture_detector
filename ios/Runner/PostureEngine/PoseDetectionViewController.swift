@@ -85,9 +85,17 @@ final class PoseDetectionViewController: UIViewController {
     // MARK: - Capture sequence
 
     private var capturedPhotos: [UIImage] = []
-    private var capturedScores: [RosaScorer.Result?] = []
+    // Per-side-shot ROSA angles, kept so the shots can be scored *after* the front
+    // shot — the front view supplies the armrest-too-wide modifier (elbow abduction).
+    private var capturedAngles: [RosaAnglesCalculator.Angles?] = []
     private let TOTAL_SHOTS_NEEDED = 3
     private let CAPTURE_COOLDOWN_MS: Double = 2000
+    // Elbow abduction (front-view shoulder→elbow angle from vertical) at or above
+    // this many degrees is scored as "armrests too wide / elbows pushed outward".
+    private let ARMREST_ABDUCTION_MAX_DEG: Double = 20
+    // Wrist bend away from straight (front-view forearm→hand angle deviating from
+    // 180°) at or above this many degrees is scored as "wrist deviates while typing".
+    private let WRIST_DEVIATION_MAX_DEG: Double = 15
     private var nextCaptureEarliestAtMs: Double = 0
     private let SKELETON_REFERENCE_WIDTH: CGFloat = 1080
     private let SIDE_VIEW_THRESHOLD: Float = 0.35
@@ -316,7 +324,7 @@ final class PoseDetectionViewController: UIViewController {
             self.appState = .lightCheck
             self.confirmationCount = 0
             self.capturedPhotos.removeAll()
-            self.capturedScores.removeAll()
+            self.capturedAngles.removeAll()
             self.nextCaptureEarliestAtMs = 0
             self.frontReadyEarliestAtMs = 0
             self.lastFrameImage = nil
@@ -600,7 +608,9 @@ final class PoseDetectionViewController: UIViewController {
                     let angles = RosaAnglesCalculator.compute(captured)
                     let photo = bakeSkeletonOntoPhoto(blurred, landmarks: captured, angles: angles)
                     capturedPhotos.append(photo)
-                    capturedScores.append(angles != nil ? RosaScorer.score(angles!, mods: workstationModifiers) : nil)
+                    // Score is computed later (at the front shot) once the
+                    // armrest-too-wide modifier is known — store the angles.
+                    capturedAngles.append(angles)
                     nextCaptureEarliestAtMs = nowMs + CAPTURE_COOLDOWN_MS
                     let shotNumber = capturedPhotos.count
                     if shotNumber >= TOTAL_SHOTS_NEEDED {
@@ -661,8 +671,18 @@ final class PoseDetectionViewController: UIViewController {
                         let withHands = drawHandsOntoPhoto(baked, handResult, poseLandmarks: captured)
                         let photo = drawShoulderAnglesOntoPhoto(withHands, poseLandmarks: captured)
                         capturedPhotos.append(photo)   // front photo: no score appended
+
+                        // Armrest-too-wide and wrist-deviation are measured here
+                        // (front view) and applied to every side shot's score,
+                        // replacing the old questionnaire questions.
+                        let w = CGFloat(frame.cgImage?.width ?? 1)
+                        let h = CGFloat(frame.cgImage?.height ?? 1)
+                        var mods = workstationModifiers
+                        mods.armrestTooWide = frontArmrestTooWide(captured, width: w, height: h)
+                        mods.keyboardDeviation = frontWristDeviated(
+                            handsToPoints(handResult), poseLandmarks: captured, width: w, height: h)
+                        let scores = capturedAngles.map { $0 != nil ? RosaScorer.score($0!, mods: mods) : nil }
                         let photos = capturedPhotos
-                        let scores = capturedScores
                         pauseCameraPipeline()
                         DispatchQueue.main.async {
                             self.triggerCaptureFlash()
@@ -923,6 +943,55 @@ final class PoseDetectionViewController: UIViewController {
         let shoulders = vis(11) >= FRONT_VISIBILITY_THRESHOLD && vis(12) >= FRONT_VISIBILITY_THRESHOLD
         let hands = vis(15) >= FRONT_VISIBILITY_THRESHOLD && vis(16) >= FRONT_VISIBILITY_THRESHOLD
         return face && shoulders && hands
+    }
+
+    /// True when either arm is abducted (elbow pushed outward) past the threshold —
+    /// the front-view equivalent of "armrests too wide". Uses the same shoulder→elbow
+    /// vs vertical angle drawn on the photo, in the image's pixel aspect (width×height).
+    private func frontArmrestTooWide(_ landmarks: [LandmarkPoint], width: CGFloat, height: CGFloat) -> Bool {
+        var maxAngle = 0.0
+        for (shIdx, elIdx) in [(11, 13), (12, 14)] {
+            guard shIdx < landmarks.count, elIdx < landmarks.count else { continue }
+            let dx = Double(landmarks[elIdx].x - landmarks[shIdx].x) * Double(width)
+            let dy = Double(landmarks[elIdx].y - landmarks[shIdx].y) * Double(height)
+            let len = (dx * dx + dy * dy).squareRoot()
+            if len < 1 { continue }
+            let angle = acos(dy / len) * 180 / .pi
+            if angle > maxAngle { maxAngle = angle }
+        }
+        return maxAngle >= ARMREST_ABDUCTION_MAX_DEG
+    }
+
+    /// True when either wrist is bent away from straight (front-view forearm→hand
+    /// angle deviating from 180°) past the threshold — the front-view equivalent of
+    /// "wrists deviate while typing". `hands` are the hand-landmarker points;
+    /// `poseLandmarks` supply the elbows (13/14).
+    private func frontWristDeviated(_ hands: [[LandmarkPoint]], poseLandmarks: [LandmarkPoint],
+                                    width: CGFloat, height: CGFloat) -> Bool {
+        var elbows: [LandmarkPoint] = []
+        if poseLandmarks.count > 13 { elbows.append(poseLandmarks[13]) }
+        if poseLandmarks.count > 14 { elbows.append(poseLandmarks[14]) }
+        if elbows.isEmpty { return false }
+
+        let w = Double(width), h = Double(height)
+        var maxDeviation = 0.0
+        for hand in hands {
+            guard hand.count > 9 else { continue }
+            let wrist = hand[0], mcp = hand[9]
+            let nearest = elbows.min(by: {
+                let d0x = Double($0.x - wrist.x) * w, d0y = Double($0.y - wrist.y) * h
+                let d1x = Double($1.x - wrist.x) * w, d1y = Double($1.y - wrist.y) * h
+                return (d0x * d0x + d0y * d0y) < (d1x * d1x + d1y * d1y)
+            })!
+            let v1x = Double(nearest.x - wrist.x) * w, v1y = Double(nearest.y - wrist.y) * h
+            let v2x = Double(mcp.x - wrist.x) * w, v2y = Double(mcp.y - wrist.y) * h
+            let m1 = (v1x * v1x + v1y * v1y).squareRoot(), m2 = (v2x * v2x + v2y * v2y).squareRoot()
+            if m1 < 1 || m2 < 1 { continue }
+            let cosA = max(-1, min(1, (v1x * v2x + v1y * v2y) / (m1 * m2)))
+            let deviation = 180 - acos(cosA) * 180 / .pi
+            if deviation > maxDeviation { maxDeviation = deviation }
+        }
+        return maxDeviation >= WRIST_DEVIATION_MAX_DEG
     }
 
     /// Drives the capture banner + (repurposed) side chip during the front phase.

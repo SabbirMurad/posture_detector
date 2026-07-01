@@ -213,12 +213,14 @@ enum PoseRenderer {
 
         ctx.setLineDash(phase: 0, lengths: [])
         for hand in hands {
+            let h0 = hand.first
+            // Nearest elbow to the wrist (point 0).
+            let nearest: LandmarkPoint? = (h0 != nil && !elbows.isEmpty) ? elbows.min(by: {
+                hypot(sx($0.x) - sx(h0!.x), sy($0.y) - sy(h0!.y))
+                < hypot(sx($1.x) - sx(h0!.x), sy($1.y) - sy(h0!.y))
+            }) : nil
             // Connector: wrist (point 0) → nearest elbow.
-            if let h0 = hand.first,
-               let nearest = elbows.min(by: {
-                   hypot(sx($0.x) - sx(h0.x), sy($0.y) - sy(h0.y))
-                   < hypot(sx($1.x) - sx(h0.x), sy($1.y) - sy(h0.y))
-               }) {
+            if let h0 = h0, let nearest = nearest {
                 ctx.setStrokeColor(UIColor.white.cgColor)
                 ctx.setLineWidth(6 * scale)
                 ctx.move(to: CGPoint(x: sx(nearest.x), y: sy(nearest.y)))
@@ -231,6 +233,31 @@ enum PoseRenderer {
                 ctx.move(to: CGPoint(x: sx(hand[start].x), y: sy(hand[start].y)))
                 ctx.addLine(to: CGPoint(x: sx(hand[end].x), y: sy(hand[end].y)))
                 ctx.strokePath()
+            }
+            // Dotted axis: wrist (0) → middle-finger MCP (9).
+            if hand.count > 9 {
+                ctx.setLineDash(phase: 0, lengths: [12 * scale, 8 * scale])
+                ctx.move(to: CGPoint(x: sx(hand[0].x), y: sy(hand[0].y)))
+                ctx.addLine(to: CGPoint(x: sx(hand[9].x), y: sy(hand[9].y)))
+                ctx.strokePath()
+                ctx.setLineDash(phase: 0, lengths: [])
+            }
+            // Wrist angle: forearm (elbow→wrist) vs hand axis (wrist→MCP).
+            // ~180° when the hand is straight in line with the forearm.
+            if let h0 = h0, let nearest = nearest, hand.count > 9 {
+                let mcp = hand[9]
+                let v1x = sx(nearest.x) - sx(h0.x), v1y = sy(nearest.y) - sy(h0.y)
+                let v2x = sx(mcp.x) - sx(h0.x), v2y = sy(mcp.y) - sy(h0.y)
+                let m1 = hypot(v1x, v1y), m2 = hypot(v2x, v2y)
+                if m1 >= 1 && m2 >= 1 {
+                    let cosA = max(-1, min(1, (v1x * v2x + v1y * v2y) / (m1 * m2)))
+                    let angle = acos(cosA) * 180 / .pi
+                    drawArc(ctx, p1: CGPoint(x: sx(nearest.x), y: sy(nearest.y)),
+                            v: CGPoint(x: sx(h0.x), y: sy(h0.y)),
+                            p2: CGPoint(x: sx(mcp.x), y: sy(mcp.y)),
+                            text: String(format: "%.0f°", angle), radius: m2 * 0.6,
+                            scale: scale, textSize: 36 * scale)
+                }
             }
             ctx.setFillColor(UIColor.green.cgColor)
             let r = 7 * scale

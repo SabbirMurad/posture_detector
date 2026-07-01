@@ -197,22 +197,48 @@ class PoseOverlayView @JvmOverloads constructor(
             linePaint: Paint,
             dotPaint: Paint,
             dotRadius: Float,
+            arcPaint: Paint,
+            labelPaint: Paint,
         ) {
             val elbows = listOfNotNull(poseLandmarks.getOrNull(13), poseLandmarks.getOrNull(14))
             for (hand in hands) {
                 val h0 = hand.getOrNull(0)
-                if (h0 != null && elbows.isNotEmpty()) {
-                    // Nearest elbow by squared pixel distance (comparable, no sqrt).
-                    val nearest = elbows.minByOrNull {
-                        val dx = sx(it.x) - sx(h0.x); val dy = sy(it.y) - sy(h0.y)
-                        dx * dx + dy * dy
-                    }!!
+                // Nearest elbow by squared pixel distance (comparable, no sqrt).
+                val nearest = if (h0 != null && elbows.isNotEmpty()) elbows.minByOrNull {
+                    val dx = sx(it.x) - sx(h0.x); val dy = sy(it.y) - sy(h0.y)
+                    dx * dx + dy * dy
+                } else null
+                if (h0 != null && nearest != null) {
                     canvas.drawLine(sx(nearest.x), sy(nearest.y), sx(h0.x), sy(h0.y), linePaint)
                 }
                 for ((start, end) in HAND_CONNECTIONS) {
                     if (start < hand.size && end < hand.size) {
                         canvas.drawLine(sx(hand[start].x), sy(hand[start].y),
                                         sx(hand[end].x), sy(hand[end].y), linePaint)
+                    }
+                }
+                // Dotted axis: wrist (0) → middle-finger MCP (9).
+                if (hand.size > 9) {
+                    val sw = linePaint.strokeWidth
+                    val dashed = Paint(linePaint).apply {
+                        pathEffect = DashPathEffect(floatArrayOf(sw * 2f, sw * 1.4f), 0f)
+                    }
+                    canvas.drawLine(sx(hand[0].x), sy(hand[0].y),
+                                    sx(hand[9].x), sy(hand[9].y), dashed)
+                }
+                // Wrist angle: forearm (elbow→wrist) vs hand axis (wrist→MCP).
+                // ~180° when the hand is straight in line with the forearm.
+                if (h0 != null && nearest != null && hand.size > 9) {
+                    val mcp = hand[9]
+                    val v1x = (sx(nearest.x) - sx(h0.x)).toDouble(); val v1y = (sy(nearest.y) - sy(h0.y)).toDouble()
+                    val v2x = (sx(mcp.x) - sx(h0.x)).toDouble();     val v2y = (sy(mcp.y) - sy(h0.y)).toDouble()
+                    val m1 = hypot(v1x, v1y); val m2 = hypot(v2x, v2y)
+                    if (m1 >= 1.0 && m2 >= 1.0) {
+                        val cosA = ((v1x * v2x + v1y * v2y) / (m1 * m2)).coerceIn(-1.0, 1.0)
+                        val angle = Math.toDegrees(acos(cosA))
+                        drawArc(canvas, sx(nearest.x), sy(nearest.y), sx(h0.x), sy(h0.y),
+                            sx(mcp.x), sy(mcp.y), "${angle.roundToInt()}°",
+                            (m2 * 0.6).toFloat(), arcPaint, labelPaint)
                     }
                 }
                 for (lm in hand) canvas.drawCircle(sx(lm.x), sy(lm.y), dotRadius, dotPaint)

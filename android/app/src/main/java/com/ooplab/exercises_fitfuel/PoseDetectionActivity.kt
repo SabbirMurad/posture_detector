@@ -137,11 +137,21 @@ class PoseDetectionActivity : AppCompatActivity() {
     // Once conditions are met, captures TOTAL_SHOTS_NEEDED photos, each at least
     // CAPTURE_COOLDOWN_MS apart and only while every condition is currently OK.
     private val capturedPhotos = mutableListOf<Bitmap>()
-    private val capturedScores = mutableListOf<RosaScorer.Result?>()
+    // Per-side-shot ROSA angles, kept so the shots can be scored *after* the front
+    // shot — the front view supplies the armrest-too-wide modifier (elbow abduction),
+    // which isn't known until then.
+    private val capturedAngles = mutableListOf<RosaAnglesCalculator.Angles?>()
 
     /** Manual checklist answers gathered by the Flutter questionnaire before launch. */
     private lateinit var workstationModifiers: RosaScorer.WorkstationModifiers
     private val TOTAL_SHOTS_NEEDED = 3
+
+    // Elbow abduction (front-view shoulder→elbow angle from vertical) at or above
+    // this many degrees is scored as "armrests too wide / elbows pushed outward".
+    private val ARMREST_ABDUCTION_MAX_DEG = 20.0
+    // Wrist bend away from straight (front-view forearm→hand angle deviating from
+    // 180°) at or above this many degrees is scored as "wrist deviates while typing".
+    private val WRIST_DEVIATION_MAX_DEG = 15.0
     private val CAPTURE_COOLDOWN_MS = 2000L
 
     // Reference width the baked-in skeleton's stroke widths / dot radii are tuned
@@ -277,7 +287,7 @@ class PoseDetectionActivity : AppCompatActivity() {
         appState = AppState.LIGHT_CHECK
         confirmationCount = 0
         capturedPhotos.clear()
-        capturedScores.clear()
+        capturedAngles.clear()
         nextCaptureEarliestAtMs = 0L
         frontReadyEarliestAtMs = 0L
         lastFrameBitmap = null
@@ -400,7 +410,9 @@ class PoseDetectionActivity : AppCompatActivity() {
                             val angles   = RosaAnglesCalculator.compute(captured)
                             val photo    = bakeSkeletonOntoPhoto(blurred, captured, angles)
                             capturedPhotos.add(photo)
-                            capturedScores.add(if (angles != null) RosaScorer.score(angles, workstationModifiers) else null)
+                            // Score is computed later (at the front shot) once the
+                            // armrest-too-wide modifier is known — store the angles.
+                            capturedAngles.add(angles)
                             if (angles != null && angles.lowerBodyConfidence == RosaAnglesCalculator.LowerBodyConfidence.LOW) {
                                 Log.d("RosaScorer", "Shot ${capturedPhotos.size}: knee occluded, seat-height score is a best-effort guess (kneeAngle=${angles.kneeAngle})")
                             }
@@ -466,10 +478,22 @@ class PoseDetectionActivity : AppCompatActivity() {
                                 drawHandsOntoPhoto(photo, handResult, captured)
                                 drawShoulderAnglesOntoPhoto(photo, captured)
                                 capturedPhotos.add(photo)   // front photo: no score appended
+
+                                // Armrest-too-wide and wrist-deviation are measured
+                                // here (front view) and applied to every side shot's
+                                // score, replacing the old questionnaire questions.
+                                val tooWide  = frontArmrestTooWide(captured, frameCopy.width, frameCopy.height)
+                                val deviated = frontWristDeviated(
+                                    handsToPoints(handResult), captured, frameCopy.width, frameCopy.height)
+                                val mods = workstationModifiers.copy(
+                                    armrestTooWide = tooWide, keyboardDeviation = deviated)
+                                val scores = capturedAngles.map {
+                                    if (it != null) RosaScorer.score(it, mods) else null
+                                }
                                 runOnUiThread {
                                     triggerCaptureFlash()
                                     pauseCameraPipeline()
-                                    finishWithCapturedPhotos(capturedPhotos.toList(), capturedScores.toList())
+                                    finishWithCapturedPhotos(capturedPhotos.toList(), scores)
                                 }
                             }
                         }
@@ -1010,9 +1034,18 @@ class PoseDetectionActivity : AppCompatActivity() {
             color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 6f * bakeScale; isAntiAlias = true
         }
         val dotPaint = Paint().apply { color = Color.GREEN; style = Paint.Style.FILL; isAntiAlias = true }
+        // Orange arc + label for the wrist angle, matching the side-view ROSA angles.
+        val arcPaint = Paint().apply {
+            color = Color.parseColor("#FF5722"); style = Paint.Style.STROKE
+            strokeWidth = 4f * bakeScale; isAntiAlias = true
+        }
+        val labelPaint = Paint().apply {
+            color = Color.parseColor("#FF5722"); textSize = 36f * bakeScale; isAntiAlias = true
+            typeface = android.graphics.Typeface.DEFAULT_BOLD; textAlign = Paint.Align.CENTER
+        }
 
         PoseOverlayView.drawHands(canvas, hands, poseLandmarks,
-            { x -> x * w }, { y -> y * h }, linePaint, dotPaint, 7f * bakeScale)
+            { x -> x * w }, { y -> y * h }, linePaint, dotPaint, 7f * bakeScale, arcPaint, labelPaint)
     }
 
     /** Converts a hand-landmarker result into normalised [LandmarkPoint] lists (one
@@ -1108,6 +1141,54 @@ class PoseDetectionActivity : AppCompatActivity() {
             tvCaptureStatus.visibility  = View.VISIBLE
             tvCaptureStatus.text = "Side photos done — move to the FRONT of the person, behind the monitor"
         }
+    }
+
+    /** True when either arm is abducted (elbow pushed outward) past the threshold —
+     *  the front-view equivalent of "armrests too wide". Uses the same shoulder→elbow
+     *  vs vertical angle drawn on the photo, in the image's pixel aspect ([w]×[h]). */
+    private fun frontArmrestTooWide(landmarks: List<LandmarkPoint>, w: Int, h: Int): Boolean {
+        var maxAngle = 0.0
+        for ((shIdx, elIdx) in listOf(11 to 13, 12 to 14)) {
+            if (shIdx >= landmarks.size || elIdx >= landmarks.size) continue
+            val dx = (landmarks[elIdx].x - landmarks[shIdx].x) * w
+            val dy = (landmarks[elIdx].y - landmarks[shIdx].y) * h
+            val len = kotlin.math.hypot(dx.toDouble(), dy.toDouble())
+            if (len < 1.0) continue
+            val angle = Math.toDegrees(kotlin.math.acos(dy / len))
+            if (angle > maxAngle) maxAngle = angle
+        }
+        return maxAngle >= ARMREST_ABDUCTION_MAX_DEG
+    }
+
+    /** True when either wrist is bent away from straight (front-view forearm→hand
+     *  angle deviating from 180°) past the threshold — the front-view equivalent of
+     *  "wrists deviate while typing". Uses the same forearm (elbow→wrist) vs hand
+     *  axis (wrist→middle-finger MCP) angle drawn on the photo. [hands] are the
+     *  hand-landmarker points; [poseLandmarks] supply the elbows (13/14). */
+    private fun frontWristDeviated(
+        hands: List<List<LandmarkPoint>>,
+        poseLandmarks: List<LandmarkPoint>,
+        w: Int, h: Int,
+    ): Boolean {
+        val elbows = listOfNotNull(poseLandmarks.getOrNull(13), poseLandmarks.getOrNull(14))
+        if (elbows.isEmpty()) return false
+        var maxDeviation = 0.0
+        for (hand in hands) {
+            if (hand.size <= 9) continue
+            val wrist = hand[0]; val mcp = hand[9]
+            val nearest = elbows.minByOrNull {
+                val dx = (it.x - wrist.x) * w; val dy = (it.y - wrist.y) * h
+                dx * dx + dy * dy
+            }!!
+            val v1x = (nearest.x - wrist.x).toDouble() * w; val v1y = (nearest.y - wrist.y).toDouble() * h
+            val v2x = (mcp.x - wrist.x).toDouble() * w;     val v2y = (mcp.y - wrist.y).toDouble() * h
+            val m1 = kotlin.math.hypot(v1x, v1y); val m2 = kotlin.math.hypot(v2x, v2y)
+            if (m1 < 1.0 || m2 < 1.0) continue
+            val cosA = ((v1x * v2x + v1y * v2y) / (m1 * m2)).coerceIn(-1.0, 1.0)
+            val deviation = 180.0 - Math.toDegrees(kotlin.math.acos(cosA))
+            if (deviation > maxDeviation) maxDeviation = deviation
+        }
+        return maxDeviation >= WRIST_DEVIATION_MAX_DEG
     }
 
     /** Face (nose), both shoulders and both wrists all above the visibility bar. */

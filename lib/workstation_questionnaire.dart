@@ -19,7 +19,6 @@ class _WorkstationQuestionnaireState extends State<WorkstationQuestionnaire> {
   bool _seatPanAdjustable = true;
   bool _armrestAdjustable = true;
   bool _armrestHardDamaged = false;
-  bool _armrestTooWide = false;
   bool _backrestAdjustable = true;
   bool _workSurfaceTooHigh = false;
 
@@ -38,7 +37,6 @@ class _WorkstationQuestionnaireState extends State<WorkstationQuestionnaire> {
   bool _mousePinchGrip = false;
   bool _mousePalmrest = false;
   bool _mouseAdjustable = true;
-  bool _keyboardDeviation = false;
   bool _keyboardTooHigh = false;
   bool _reachingOverhead = false;
   bool _keyboardPlatformAdjustable = true;
@@ -55,7 +53,7 @@ class _WorkstationQuestionnaireState extends State<WorkstationQuestionnaire> {
         seatPanNonAdjustable: !_seatPanAdjustable,
         armrestNonAdjustable: !_armrestAdjustable,
         armrestHardDamaged: _armrestHardDamaged,
-        armrestTooWide: _armrestTooWide,
+        // armrestTooWide is measured from the camera, not asked here.
         backrestNonAdjustable: !_backrestAdjustable,
         workSurfaceTooHigh: _workSurfaceTooHigh,
         monitorNonAdjustable: !_monitorAdjustable,
@@ -70,7 +68,7 @@ class _WorkstationQuestionnaireState extends State<WorkstationQuestionnaire> {
         mousePinchGrip: _mousePinchGrip,
         mousePalmrest: _mousePalmrest,
         mouseNonAdjustable: !_mouseAdjustable,
-        keyboardDeviation: _keyboardDeviation,
+        // keyboardDeviation is measured from the camera, not asked here.
         keyboardTooHigh: _keyboardTooHigh,
         reachingOverhead: _reachingOverhead,
         keyboardPlatformNonAdjustable: !_keyboardPlatformAdjustable,
@@ -124,11 +122,8 @@ class _WorkstationQuestionnaireState extends State<WorkstationQuestionnaire> {
             _armrestHardDamaged,
             (v) => setState(() => _armrestHardDamaged = v),
           ),
-          _BoolQuestion(
-            'Armrests are too wide (push elbows outward)',
-            _armrestTooWide,
-            (v) => setState(() => _armrestTooWide = v),
-          ),
+          // "Armrests too wide" is no longer asked — it's measured from the front
+          // camera view (elbow abduction angle) during capture.
           _BoolQuestion(
             'Backrest is adjustable',
             _backrestAdjustable,
@@ -212,11 +207,8 @@ class _WorkstationQuestionnaireState extends State<WorkstationQuestionnaire> {
             _mouseAdjustable,
             (v) => setState(() => _mouseAdjustable = v),
           ),
-          _BoolQuestion(
-            'Wrists bend sideways (deviate) while typing',
-            _keyboardDeviation,
-            (v) => setState(() => _keyboardDeviation = v),
-          ),
+          // "Wrists deviate while typing" is no longer asked — it's measured from
+          // the front camera view (forearm→hand angle) during capture.
           _BoolQuestion(
             'Keyboard is too high (shoulders shrug)',
             _keyboardTooHigh,
