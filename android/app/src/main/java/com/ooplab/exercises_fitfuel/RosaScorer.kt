@@ -130,20 +130,21 @@ object RosaScorer {
         val mouseScore: Int,
         val lowerBodyConfidence: String,
     ) {
+        // snake_case keys — the Flutter-facing contract (matches the iOS side).
         fun toMap(): Map<String, Any> = mapOf(
-            "finalScore"             to finalScore,
-            "riskLevel"              to riskLevel,
-            "chairScore"             to chairScore,
-            "peripheralScore"        to peripheralScore,
-            "monitorAreaScore"       to monitorAreaScore,
-            "mouseKeyboardAreaScore" to mouseKeyboardAreaScore,
-            "seatHeightScore"        to seatHeightScore,
-            "backrestScore"          to backrestScore,
-            "armrestScore"           to armrestScore,
-            "monitorScore"           to monitorScore,
-            "keyboardScore"          to keyboardScore,
-            "mouseScore"             to mouseScore,
-            "lowerBodyConfidence"    to lowerBodyConfidence,
+            "final_score"               to finalScore,
+            "risk_level"                to riskLevel,
+            "chair_score"               to chairScore,
+            "peripheral_score"          to peripheralScore,
+            "monitor_area_score"        to monitorAreaScore,
+            "mouse_keyboard_area_score" to mouseKeyboardAreaScore,
+            "seat_height_score"         to seatHeightScore,
+            "backrest_score"            to backrestScore,
+            "armrest_score"             to armrestScore,
+            "monitor_score"             to monitorScore,
+            "keyboard_score"            to keyboardScore,
+            "mouse_score"               to mouseScore,
+            "lower_body_confidence"     to lowerBodyConfidence,
         )
     }
 

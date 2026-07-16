@@ -17,9 +17,9 @@ import MediaPipeTasksVision
 /// onto it, so there are no data races and no locks. UI work is dispatched to main.
 final class PoseDetectionViewController: UIViewController {
 
-    /// Result is `["photo_paths": [String], "rosa_scores": [[String: Any]],
-    /// "body_angles": [[String: Any]]]`, or `nil` if the user cancelled —
-    /// matching what the Android MainActivity returns.
+    /// Result is `["side_captures": [[String: Any]], "front_capture": [String: Any]]`
+    /// (see finishWithCaptures), or `nil` if the user cancelled — matching what the
+    /// Android MainActivity returns.
     var onComplete: (([String: Any]?) -> Void)?
 
     private let workstationModifiers: RosaScorer.WorkstationModifiers
@@ -85,10 +85,18 @@ final class PoseDetectionViewController: UIViewController {
 
     // MARK: - Capture sequence
 
+    // The 3 side shots only. The front shot is held separately (frontPhoto).
     private var capturedPhotos: [UIImage] = []
     // Per-side-shot ROSA angles, kept so the shots can be scored *after* the front
     // shot — the front view supplies the armrest-too-wide modifier (elbow abduction).
     private var capturedAngles: [RosaAnglesCalculator.Angles?] = []
+
+    // The front (4th) shot and its two raw measured angles (degrees). These feed the
+    // armrest-too-wide / keyboard-deviation modifiers and are also surfaced to Flutter.
+    private var frontPhoto: UIImage?
+    private var frontAbductionAngle: Double = 0
+    private var frontWristDeviationAngle: Double = 0
+
     private let TOTAL_SHOTS_NEEDED = 3
     private let CAPTURE_COOLDOWN_MS: Double = 2000
     // Elbow abduction (front-view shoulder→elbow angle from vertical) at or above
@@ -326,6 +334,9 @@ final class PoseDetectionViewController: UIViewController {
             self.confirmationCount = 0
             self.capturedPhotos.removeAll()
             self.capturedAngles.removeAll()
+            self.frontPhoto = nil
+            self.frontAbductionAngle = 0
+            self.frontWristDeviationAngle = 0
             self.nextCaptureEarliestAtMs = 0
             self.frontReadyEarliestAtMs = 0
             self.lastFrameImage = nil
@@ -671,23 +682,26 @@ final class PoseDetectionViewController: UIViewController {
                                                           excludeIndices: FRONT_SKELETON_EXCLUDE)
                         let withHands = drawHandsOntoPhoto(baked, handResult, poseLandmarks: captured)
                         let photo = drawShoulderAnglesOntoPhoto(withHands, poseLandmarks: captured)
-                        capturedPhotos.append(photo)   // front photo: no score appended
+                        frontPhoto = photo   // held separately from the side shots
 
                         // Armrest-too-wide and wrist-deviation are measured here
                         // (front view) and applied to every side shot's score,
-                        // replacing the old questionnaire questions.
+                        // replacing the old questionnaire questions. The raw angles are
+                        // also surfaced to Flutter.
                         let w = CGFloat(frame.cgImage?.width ?? 1)
                         let h = CGFloat(frame.cgImage?.height ?? 1)
-                        var mods = workstationModifiers
-                        mods.armrestTooWide = frontArmrestTooWide(captured, width: w, height: h)
-                        mods.keyboardDeviation = frontWristDeviated(
+                        frontAbductionAngle = frontAbductionAngleDeg(captured, width: w, height: h)
+                        frontWristDeviationAngle = frontWristDeviationDeg(
                             handsToPoints(handResult), poseLandmarks: captured, width: w, height: h)
+                        var mods = workstationModifiers
+                        mods.armrestTooWide = frontAbductionAngle >= ARMREST_ABDUCTION_MAX_DEG
+                        mods.keyboardDeviation = frontWristDeviationAngle >= WRIST_DEVIATION_MAX_DEG
                         let scores = capturedAngles.map { $0 != nil ? RosaScorer.score($0!, mods: mods) : nil }
-                        let photos = capturedPhotos
+                        let sidePhotos = capturedPhotos
                         pauseCameraPipeline()
                         DispatchQueue.main.async {
                             self.triggerCaptureFlash()
-                            self.finishWithCapturedPhotos(photos, scores: scores)
+                            self.finishWithCaptures(sidePhotos, scores: scores)
                         }
                     }
                 }
@@ -855,26 +869,42 @@ final class PoseDetectionViewController: UIViewController {
         }
     }
 
-    private func finishWithCapturedPhotos(_ photos: [UIImage], scores: [RosaScorer.Result?]) {
+    /// Writes the captured photos and hands the whole capture back to Flutter, grouped
+    /// as `side_captures` (image + score + angles per side shot) and one `front_capture`
+    /// (image + the two raw front-view angles). All keys snake_case.
+    private func finishWithCaptures(_ sidePhotos: [UIImage], scores: [RosaScorer.Result?]) {
         let dir = (NSTemporaryDirectory() as NSString).appendingPathComponent("posture_photos")
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        var paths: [String] = []
-        for (i, photo) in photos.enumerated() {
-            let path = (dir as NSString).appendingPathComponent("photo_\(i + 1).jpg")
-            if let data = photo.jpegData(compressionQuality: 0.92) {
-                try? data.write(to: URL(fileURLWithPath: path))
-                paths.append(path)
-            }
+
+        func write(_ image: UIImage, _ name: String) -> String? {
+            let path = (dir as NSString).appendingPathComponent(name)
+            guard let data = image.jpegData(compressionQuality: 0.92) else { return nil }
+            try? data.write(to: URL(fileURLWithPath: path))
+            return path
         }
-        let scoreMaps: [[String: Any]] = scores.map { $0?.toMap() ?? [:] }
-        // Measured body angles per side shot — parallel to scores/side photos.
-        let angleMaps: [[String: Any]] = capturedAngles.map { $0?.toMap() ?? [:] }
-        let result: [String: Any] = [
-            "photo_paths": paths,
-            "rosa_scores": scoreMaps,
-            "body_angles": angleMaps,
+
+        var sideCaptures: [[String: Any]] = []
+        for (i, photo) in sidePhotos.enumerated() {
+            var obj: [String: Any] = [
+                "rosa_score": scores.indices.contains(i) ? (scores[i]?.toMap() ?? [:]) : [:],
+                "body_angles": capturedAngles.indices.contains(i) ? (capturedAngles[i]?.toMap() ?? [:]) : [:],
+            ]
+            if let path = write(photo, "side_\(i + 1).jpg") { obj["image_path"] = path }
+            sideCaptures.append(obj)
+        }
+
+        var frontCapture: [String: Any] = [
+            "abduction_angle": frontAbductionAngle,
+            "wrist_deviation_angle": frontWristDeviationAngle,
         ]
-        finish(with: result)
+        if let front = frontPhoto, let path = write(front, "front.jpg") {
+            frontCapture["image_path"] = path
+        }
+
+        finish(with: [
+            "side_captures": sideCaptures,
+            "front_capture": frontCapture,
+        ])
     }
 
     private func finish(with result: [String: Any]?) {
@@ -952,10 +982,11 @@ final class PoseDetectionViewController: UIViewController {
         return face && shoulders && hands
     }
 
-    /// True when either arm is abducted (elbow pushed outward) past the threshold —
-    /// the front-view equivalent of "armrests too wide". Uses the same shoulder→elbow
-    /// vs vertical angle drawn on the photo, in the image's pixel aspect (width×height).
-    private func frontArmrestTooWide(_ landmarks: [LandmarkPoint], width: CGFloat, height: CGFloat) -> Bool {
+    /// Max elbow abduction (shoulder→elbow angle from vertical, degrees) across both
+    /// arms — the front-view "armrests too wide" measurement. Compared against
+    /// ARMREST_ABDUCTION_MAX_DEG at the call site; the raw angle is also surfaced to
+    /// Flutter. Uses the same angle drawn on the photo, in the image's pixel aspect.
+    private func frontAbductionAngleDeg(_ landmarks: [LandmarkPoint], width: CGFloat, height: CGFloat) -> Double {
         var maxAngle = 0.0
         for (shIdx, elIdx) in [(11, 13), (12, 14)] {
             guard shIdx < landmarks.count, elIdx < landmarks.count else { continue }
@@ -966,19 +997,20 @@ final class PoseDetectionViewController: UIViewController {
             let angle = acos(dy / len) * 180 / .pi
             if angle > maxAngle { maxAngle = angle }
         }
-        return maxAngle >= ARMREST_ABDUCTION_MAX_DEG
+        return maxAngle
     }
 
-    /// True when either wrist is bent away from straight (front-view forearm→hand
-    /// angle deviating from 180°) past the threshold — the front-view equivalent of
-    /// "wrists deviate while typing". `hands` are the hand-landmarker points;
-    /// `poseLandmarks` supply the elbows (13/14).
-    private func frontWristDeviated(_ hands: [[LandmarkPoint]], poseLandmarks: [LandmarkPoint],
-                                    width: CGFloat, height: CGFloat) -> Bool {
+    /// Max wrist deviation (front-view forearm→hand angle away from a straight 180°,
+    /// degrees) across both hands — the "wrists deviate while typing" measurement.
+    /// Compared against WRIST_DEVIATION_MAX_DEG at the call site; the raw angle is also
+    /// surfaced to Flutter. `hands` are the hand-landmarker points; `poseLandmarks`
+    /// supply the elbows (13/14). Returns 0 when no hand is usable (straight = none).
+    private func frontWristDeviationDeg(_ hands: [[LandmarkPoint]], poseLandmarks: [LandmarkPoint],
+                                        width: CGFloat, height: CGFloat) -> Double {
         var elbows: [LandmarkPoint] = []
         if poseLandmarks.count > 13 { elbows.append(poseLandmarks[13]) }
         if poseLandmarks.count > 14 { elbows.append(poseLandmarks[14]) }
-        if elbows.isEmpty { return false }
+        if elbows.isEmpty { return 0 }
 
         let w = Double(width), h = Double(height)
         var maxDeviation = 0.0
@@ -998,7 +1030,7 @@ final class PoseDetectionViewController: UIViewController {
             let deviation = 180 - acos(cosA) * 180 / .pi
             if deviation > maxDeviation { maxDeviation = deviation }
         }
-        return maxDeviation >= WRIST_DEVIATION_MAX_DEG
+        return maxDeviation
     }
 
     /// Drives the capture banner + (repurposed) side chip during the front phase.

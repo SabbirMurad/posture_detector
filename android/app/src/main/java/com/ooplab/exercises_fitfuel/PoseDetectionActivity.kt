@@ -46,12 +46,13 @@ import java.util.concurrent.Executors
 class PoseDetectionActivity : AppCompatActivity() {
 
     companion object {
-        /** Activity-result extra: ArrayList<String> of absolute paths to the captured JPEGs. */
-        const val EXTRA_PHOTO_PATHS  = "photo_paths"
-        /** Activity-result extra: JSON array string of ROSA score maps, one per photo. */
-        const val EXTRA_ROSA_SCORES  = "rosa_scores"
-        /** Activity-result extra: JSON array string of measured body-angle maps, one per side shot. */
-        const val EXTRA_BODY_ANGLES  = "body_angles"
+        /**
+         * Activity-result extra: a JSON object string of the whole capture, grouped as
+         *   { "side_captures": [ { image_path, rosa_score {…}, body_angles {…} }, … ],
+         *     "front_capture": { image_path, abduction_angle, wrist_deviation_angle } }
+         * All keys are snake_case — this is the Flutter-facing contract.
+         */
+        const val EXTRA_RESULT  = "result"
         /** Launch extra: JSON object string of the manual workstation questionnaire answers. */
         const val EXTRA_WORKSTATION_ANSWERS = "workstation_answers"
 
@@ -138,11 +139,18 @@ class PoseDetectionActivity : AppCompatActivity() {
     // ── Multi-shot capture sequence ───────────────────────────────────────────
     // Once conditions are met, captures TOTAL_SHOTS_NEEDED photos, each at least
     // CAPTURE_COOLDOWN_MS apart and only while every condition is currently OK.
+    // The 3 side shots only. The front shot is held separately (frontPhoto).
     private val capturedPhotos = mutableListOf<Bitmap>()
     // Per-side-shot ROSA angles, kept so the shots can be scored *after* the front
     // shot — the front view supplies the armrest-too-wide modifier (elbow abduction),
     // which isn't known until then.
     private val capturedAngles = mutableListOf<RosaAnglesCalculator.Angles?>()
+
+    // The front (4th) shot and its two raw measured angles (degrees). These feed the
+    // armrest-too-wide / keyboard-deviation modifiers and are also surfaced to Flutter.
+    private var frontPhoto: Bitmap? = null
+    private var frontAbductionAngle: Double = 0.0
+    private var frontWristDeviationAngle: Double = 0.0
 
     /** Manual checklist answers gathered by the Flutter questionnaire before launch. */
     private lateinit var workstationModifiers: RosaScorer.WorkstationModifiers
@@ -290,6 +298,9 @@ class PoseDetectionActivity : AppCompatActivity() {
         confirmationCount = 0
         capturedPhotos.clear()
         capturedAngles.clear()
+        frontPhoto = null
+        frontAbductionAngle = 0.0
+        frontWristDeviationAngle = 0.0
         nextCaptureEarliestAtMs = 0L
         frontReadyEarliestAtMs = 0L
         lastFrameBitmap = null
@@ -479,14 +490,18 @@ class PoseDetectionActivity : AppCompatActivity() {
                                     blurred, upperBody, null, excludeIndices = FRONT_SKELETON_EXCLUDE)
                                 drawHandsOntoPhoto(photo, handResult, captured)
                                 drawShoulderAnglesOntoPhoto(photo, captured)
-                                capturedPhotos.add(photo)   // front photo: no score appended
+                                frontPhoto = photo   // held separately from the side shots
 
                                 // Armrest-too-wide and wrist-deviation are measured
                                 // here (front view) and applied to every side shot's
-                                // score, replacing the old questionnaire questions.
-                                val tooWide  = frontArmrestTooWide(captured, frameCopy.width, frameCopy.height)
-                                val deviated = frontWristDeviated(
+                                // score, replacing the old questionnaire questions. The
+                                // raw angles are also surfaced to Flutter.
+                                frontAbductionAngle = frontAbductionAngleDeg(
+                                    captured, frameCopy.width, frameCopy.height)
+                                frontWristDeviationAngle = frontWristDeviationDeg(
                                     handsToPoints(handResult), captured, frameCopy.width, frameCopy.height)
+                                val tooWide  = frontAbductionAngle >= ARMREST_ABDUCTION_MAX_DEG
+                                val deviated = frontWristDeviationAngle >= WRIST_DEVIATION_MAX_DEG
                                 val mods = workstationModifiers.copy(
                                     armrestTooWide = tooWide, keyboardDeviation = deviated)
                                 val scores = capturedAngles.map {
@@ -495,7 +510,7 @@ class PoseDetectionActivity : AppCompatActivity() {
                                 runOnUiThread {
                                     triggerCaptureFlash()
                                     pauseCameraPipeline()
-                                    finishWithCapturedPhotos(capturedPhotos.toList(), scores)
+                                    finishWithCaptures(capturedPhotos.toList(), scores)
                                 }
                             }
                         }
@@ -904,33 +919,43 @@ class PoseDetectionActivity : AppCompatActivity() {
     }
 
     /**
-     * Writes the captured photos (skeleton already baked in) to the cache dir as JPEGs,
-     * serialises the ROSA scores to JSON, and hands both back to MainActivity via the
-     * activity result for Flutter to render on the review screen.
+     * Writes the captured photos (skeleton already baked in) to the cache dir as JPEGs
+     * and serialises the whole capture — grouped as `side_captures` (image + score +
+     * angles per side shot) and one `front_capture` (image + the two raw front-view
+     * angles) — to a single JSON object, handed back to MainActivity for Flutter.
      */
-    private fun finishWithCapturedPhotos(photos: List<Bitmap>, scores: List<RosaScorer.Result?>) {
+    private fun finishWithCaptures(sidePhotos: List<Bitmap>, scores: List<RosaScorer.Result?>) {
         val dir = File(cacheDir, "posture_photos").apply { mkdirs() }
-        val paths = ArrayList<String>(photos.size)
-        photos.forEachIndexed { i, bitmap ->
-            val file = File(dir, "photo_${i + 1}.jpg")
+
+        fun write(bitmap: Bitmap, name: String): String {
+            val file = File(dir, name)
             FileOutputStream(file).use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, 92, out) }
-            paths.add(file.absolutePath)
+            return file.absolutePath
         }
-        val scoresJson = org.json.JSONArray().also { arr ->
-            scores.forEach { r ->
-                arr.put(if (r != null) org.json.JSONObject(r.toMap()) else org.json.JSONObject())
+
+        val sideCaptures = org.json.JSONArray().also { arr ->
+            sidePhotos.forEachIndexed { i, bitmap ->
+                val obj = org.json.JSONObject()
+                obj.put("image_path", write(bitmap, "side_${i + 1}.jpg"))
+                obj.put("rosa_score", scores.getOrNull(i)?.let { org.json.JSONObject(it.toMap()) }
+                    ?: org.json.JSONObject())
+                obj.put("body_angles", capturedAngles.getOrNull(i)?.let { org.json.JSONObject(it.toMap()) }
+                    ?: org.json.JSONObject())
+                arr.put(obj)
             }
-        }.toString()
-        // Measured body angles per side shot — parallel to scores/side photos.
-        val anglesJson = org.json.JSONArray().also { arr ->
-            capturedAngles.forEach { a ->
-                arr.put(if (a != null) org.json.JSONObject(a.toMap()) else org.json.JSONObject())
-            }
-        }.toString()
-        setResult(Activity.RESULT_OK, Intent()
-            .putStringArrayListExtra(EXTRA_PHOTO_PATHS, paths)
-            .putExtra(EXTRA_ROSA_SCORES, scoresJson)
-            .putExtra(EXTRA_BODY_ANGLES, anglesJson))
+        }
+
+        val frontCapture = org.json.JSONObject().also { obj ->
+            frontPhoto?.let { obj.put("image_path", write(it, "front.jpg")) }
+            obj.put("abduction_angle", frontAbductionAngle)
+            obj.put("wrist_deviation_angle", frontWristDeviationAngle)
+        }
+
+        val result = org.json.JSONObject()
+            .put("side_captures", sideCaptures)
+            .put("front_capture", frontCapture)
+
+        setResult(Activity.RESULT_OK, Intent().putExtra(EXTRA_RESULT, result.toString()))
         finish()
     }
 
@@ -1152,10 +1177,12 @@ class PoseDetectionActivity : AppCompatActivity() {
         }
     }
 
-    /** True when either arm is abducted (elbow pushed outward) past the threshold —
-     *  the front-view equivalent of "armrests too wide". Uses the same shoulder→elbow
-     *  vs vertical angle drawn on the photo, in the image's pixel aspect ([w]×[h]). */
-    private fun frontArmrestTooWide(landmarks: List<LandmarkPoint>, w: Int, h: Int): Boolean {
+    /** Max elbow abduction (shoulder→elbow angle from vertical, degrees) across both
+     *  arms — the front-view "armrests too wide" measurement. Compared against
+     *  ARMREST_ABDUCTION_MAX_DEG at the call site; the raw angle is also surfaced to
+     *  Flutter. Uses the same angle drawn on the photo, in the image's pixel aspect
+     *  ([w]×[h]). */
+    private fun frontAbductionAngleDeg(landmarks: List<LandmarkPoint>, w: Int, h: Int): Double {
         var maxAngle = 0.0
         for ((shIdx, elIdx) in listOf(11 to 13, 12 to 14)) {
             if (shIdx >= landmarks.size || elIdx >= landmarks.size) continue
@@ -1166,21 +1193,23 @@ class PoseDetectionActivity : AppCompatActivity() {
             val angle = Math.toDegrees(kotlin.math.acos(dy / len))
             if (angle > maxAngle) maxAngle = angle
         }
-        return maxAngle >= ARMREST_ABDUCTION_MAX_DEG
+        return maxAngle
     }
 
-    /** True when either wrist is bent away from straight (front-view forearm→hand
-     *  angle deviating from 180°) past the threshold — the front-view equivalent of
-     *  "wrists deviate while typing". Uses the same forearm (elbow→wrist) vs hand
-     *  axis (wrist→middle-finger MCP) angle drawn on the photo. [hands] are the
-     *  hand-landmarker points; [poseLandmarks] supply the elbows (13/14). */
-    private fun frontWristDeviated(
+    /** Max wrist deviation (front-view forearm→hand angle away from a straight 180°,
+     *  degrees) across both hands — the "wrists deviate while typing" measurement.
+     *  Compared against WRIST_DEVIATION_MAX_DEG at the call site; the raw angle is also
+     *  surfaced to Flutter. Uses the forearm (elbow→wrist) vs hand axis (wrist→
+     *  middle-finger MCP) angle drawn on the photo. [hands] are the hand-landmarker
+     *  points; [poseLandmarks] supply the elbows (13/14). Returns 0.0 when no hand is
+     *  usable (straight = no deviation). */
+    private fun frontWristDeviationDeg(
         hands: List<List<LandmarkPoint>>,
         poseLandmarks: List<LandmarkPoint>,
         w: Int, h: Int,
-    ): Boolean {
+    ): Double {
         val elbows = listOfNotNull(poseLandmarks.getOrNull(13), poseLandmarks.getOrNull(14))
-        if (elbows.isEmpty()) return false
+        if (elbows.isEmpty()) return 0.0
         var maxDeviation = 0.0
         for (hand in hands) {
             if (hand.size <= 9) continue
@@ -1197,7 +1226,7 @@ class PoseDetectionActivity : AppCompatActivity() {
             val deviation = 180.0 - Math.toDegrees(kotlin.math.acos(cosA))
             if (deviation > maxDeviation) maxDeviation = deviation
         }
-        return maxDeviation >= WRIST_DEVIATION_MAX_DEG
+        return maxDeviation
     }
 
     /** Face (nose), both shoulders and both wrists all above the visibility bar. */

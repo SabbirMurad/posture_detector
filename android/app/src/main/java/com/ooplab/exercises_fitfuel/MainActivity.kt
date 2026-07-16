@@ -42,54 +42,33 @@ class MainActivity : FlutterActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_CODE) {
             if (resultCode == Activity.RESULT_OK && data != null) {
-                val paths      = data.getStringArrayListExtra(PoseDetectionActivity.EXTRA_PHOTO_PATHS)
-                val scoresJson = data.getStringExtra(PoseDetectionActivity.EXTRA_ROSA_SCORES)
-                val anglesJson = data.getStringExtra(PoseDetectionActivity.EXTRA_BODY_ANGLES)
-                val scores = if (!scoresJson.isNullOrEmpty()) {
-                    val arr = org.json.JSONArray(scoresJson)
-                    (0 until arr.length()).map { i ->
-                        val obj = arr.getJSONObject(i)
-                        hashMapOf<String, Any>(
-                            "final_score"               to obj.optInt("finalScore", 0),
-                            "risk_level"                to obj.optString("riskLevel", "Unknown"),
-                            "chair_score"               to obj.optInt("chairScore", 0),
-                            "peripheral_score"          to obj.optInt("peripheralScore", 0),
-                            "monitor_area_score"        to obj.optInt("monitorAreaScore", 0),
-                            "mouse_keyboard_area_score" to obj.optInt("mouseKeyboardAreaScore", 0),
-                            "seat_height_score" to obj.optInt("seatHeightScore", 0),
-                            "backrest_score"    to obj.optInt("backrestScore", 0),
-                            "armrest_score"     to obj.optInt("armrestScore", 0),
-                            "monitor_score"     to obj.optInt("monitorScore", 0),
-                            "keyboard_score"    to obj.optInt("keyboardScore", 0),
-                            "mouse_score"       to obj.optInt("mouseScore", 0),
-                            "lower_body_confidence" to obj.optString("lowerBodyConfidence", "HIGH"),
-                        )
-                    }
-                } else emptyList<Map<String, Any>>()
-                val angles = if (!anglesJson.isNullOrEmpty()) {
-                    val arr = org.json.JSONArray(anglesJson)
-                    (0 until arr.length()).map { i ->
-                        val obj = arr.getJSONObject(i)
-                        hashMapOf<String, Any>(
-                            "side"                  to obj.optString("side", ""),
-                            "knee_angle"            to obj.optDouble("knee_angle", Double.NaN),
-                            "trunk_angle"           to obj.optDouble("trunk_angle", Double.NaN),
-                            "elbow_angle"           to obj.optDouble("elbow_angle", Double.NaN),
-                            "neck_angle"            to obj.optDouble("neck_angle", Double.NaN),
-                            "neck_state"            to obj.optString("neck_state", ""),
-                            "lower_body_confidence" to obj.optString("lower_body_confidence", ""),
-                        )
-                    }
-                } else emptyList<Map<String, Any>>()
-                pendingResult?.success(hashMapOf(
-                    "photo_paths"  to (paths ?: arrayListOf<String>()),
-                    "rosa_scores"  to scores,
-                    "body_angles"  to angles,
-                ))
+                val json = data.getStringExtra(PoseDetectionActivity.EXTRA_RESULT)
+                // The Activity already emits the final snake_case contract
+                // ({ side_captures: [...], front_capture: {...} }); just decode the
+                // JSON into plain Map/List so the MethodChannel can serialise it.
+                val result = if (!json.isNullOrEmpty()) jsonToMap(org.json.JSONObject(json)) else null
+                pendingResult?.success(result)
             } else {
                 pendingResult?.success(null)
             }
             pendingResult = null
         }
+    }
+
+    // ── JSON → plain Kotlin collections (MethodChannel can't serialise org.json types) ──
+    private fun jsonToMap(obj: org.json.JSONObject): Map<String, Any?> {
+        val map = HashMap<String, Any?>()
+        for (key in obj.keys()) map[key] = unwrap(obj.get(key))
+        return map
+    }
+
+    private fun jsonToList(arr: org.json.JSONArray): List<Any?> =
+        (0 until arr.length()).map { unwrap(arr.get(it)) }
+
+    private fun unwrap(value: Any?): Any? = when (value) {
+        is org.json.JSONObject -> jsonToMap(value)
+        is org.json.JSONArray  -> jsonToList(value)
+        org.json.JSONObject.NULL -> null
+        else -> value
     }
 }
