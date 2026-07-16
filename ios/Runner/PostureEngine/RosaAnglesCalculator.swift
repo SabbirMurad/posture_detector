@@ -20,7 +20,13 @@ enum RosaAnglesCalculator {
     private static let LEFT_ANKLE = 27
     private static let RIGHT_ANKLE = 28
 
-    enum NeckState { case neutral, forwardHead, mildFlexion, severeFlexion, headBack }
+    enum NeckState: String {
+        case neutral = "NEUTRAL"
+        case forwardHead = "FORWARD_HEAD"
+        case mildFlexion = "MILD_FLEXION"
+        case severeFlexion = "SEVERE_FLEXION"
+        case headBack = "HEAD_BACK"
+    }
 
     /// HIGH = knee angle is measured (or proxied from a visible knee); LOW = the
     /// knee itself was occluded and reconstructed, so the seat-height score is a
@@ -39,6 +45,21 @@ enum RosaAnglesCalculator {
         let wristExtension: Float
         let mouseReach: Float
         let lowerBodyConfidence: LowerBodyConfidence
+
+        /// Readable summary of the measured body angles, for the Flutter review
+        /// screen. Only the degree-valued angles are exposed; the raw normalized
+        /// offsets (shrugGap, wristExtension, …) are internal scoring inputs.
+        func toMap() -> [String: Any] {
+            return [
+                "side": isLeftSide ? "Left" : "Right",
+                "knee_angle": Double(kneeAngle),
+                "trunk_angle": Double(trunkAngle),
+                "elbow_angle": Double(elbowAngle),
+                "neck_angle": Double(neckAngle),
+                "neck_state": neckState.rawValue,
+                "lower_body_confidence": lowerBodyConfidence.rawValue,
+            ]
+        }
     }
 
     static func compute(_ lm: [LandmarkPoint]) -> Angles? {

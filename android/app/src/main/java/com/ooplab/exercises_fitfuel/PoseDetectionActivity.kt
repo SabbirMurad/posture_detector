@@ -50,6 +50,8 @@ class PoseDetectionActivity : AppCompatActivity() {
         const val EXTRA_PHOTO_PATHS  = "photo_paths"
         /** Activity-result extra: JSON array string of ROSA score maps, one per photo. */
         const val EXTRA_ROSA_SCORES  = "rosa_scores"
+        /** Activity-result extra: JSON array string of measured body-angle maps, one per side shot. */
+        const val EXTRA_BODY_ANGLES  = "body_angles"
         /** Launch extra: JSON object string of the manual workstation questionnaire answers. */
         const val EXTRA_WORKSTATION_ANSWERS = "workstation_answers"
 
@@ -919,9 +921,16 @@ class PoseDetectionActivity : AppCompatActivity() {
                 arr.put(if (r != null) org.json.JSONObject(r.toMap()) else org.json.JSONObject())
             }
         }.toString()
+        // Measured body angles per side shot — parallel to scores/side photos.
+        val anglesJson = org.json.JSONArray().also { arr ->
+            capturedAngles.forEach { a ->
+                arr.put(if (a != null) org.json.JSONObject(a.toMap()) else org.json.JSONObject())
+            }
+        }.toString()
         setResult(Activity.RESULT_OK, Intent()
             .putStringArrayListExtra(EXTRA_PHOTO_PATHS, paths)
-            .putExtra(EXTRA_ROSA_SCORES, scoresJson))
+            .putExtra(EXTRA_ROSA_SCORES, scoresJson)
+            .putExtra(EXTRA_BODY_ANGLES, anglesJson))
         finish()
     }
 

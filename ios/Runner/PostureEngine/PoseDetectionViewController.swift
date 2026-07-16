@@ -17,8 +17,9 @@ import MediaPipeTasksVision
 /// onto it, so there are no data races and no locks. UI work is dispatched to main.
 final class PoseDetectionViewController: UIViewController {
 
-    /// Result is `["photo_paths": [String], "rosa_scores": [[String: Any]]]`, or
-    /// `nil` if the user cancelled — matching what the Android MainActivity returns.
+    /// Result is `["photo_paths": [String], "rosa_scores": [[String: Any]],
+    /// "body_angles": [[String: Any]]]`, or `nil` if the user cancelled —
+    /// matching what the Android MainActivity returns.
     var onComplete: (([String: Any]?) -> Void)?
 
     private let workstationModifiers: RosaScorer.WorkstationModifiers
@@ -866,7 +867,13 @@ final class PoseDetectionViewController: UIViewController {
             }
         }
         let scoreMaps: [[String: Any]] = scores.map { $0?.toMap() ?? [:] }
-        let result: [String: Any] = ["photo_paths": paths, "rosa_scores": scoreMaps]
+        // Measured body angles per side shot — parallel to scores/side photos.
+        let angleMaps: [[String: Any]] = capturedAngles.map { $0?.toMap() ?? [:] }
+        let result: [String: Any] = [
+            "photo_paths": paths,
+            "rosa_scores": scoreMaps,
+            "body_angles": angleMaps,
+        ]
         finish(with: result)
     }
 

@@ -2,7 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:posture_detector/assessment_database.dart';
+// import 'package:posture_detector/assessment_database.dart'; // DISABLED: SQLite persistence
+import 'package:posture_detector/body_angles.dart';
 import 'package:posture_detector/review_screen.dart';
 import 'package:posture_detector/rosa_score.dart';
 import 'package:posture_detector/workstation_answers.dart';
@@ -34,16 +35,20 @@ class _StartScreenState extends State<StartScreen> {
       final rosaScores = (result['rosa_scores'] as List? ?? [])
           .map((e) => RosaScore.fromMap(Map<String, dynamic>.from(e as Map)))
           .toList();
+      final bodyAngles = (result['body_angles'] as List? ?? [])
+          .map((e) => BodyAngles.fromMap(Map<String, dynamic>.from(e as Map)))
+          .toList();
 
-      // Persist this completed assessment (questionnaire answers + averaged
-      // score) so the success screen can export the full history to Excel.
-      if (rosaScores.isNotEmpty) {
-        await AssessmentDatabase.instance.saveAssessment(
-          answers: answers.toMap(),
-          score: RosaScore.average(rosaScores),
-          photoPaths: photoPaths,
-        );
-      }
+      // DISABLED: persisting the completed assessment (questionnaire answers +
+      // averaged score + photos) to SQLite. Paired with the disabled history
+      // export on the success screen — re-enable both together.
+      // if (rosaScores.isNotEmpty) {
+      //   await AssessmentDatabase.instance.saveAssessment(
+      //     answers: answers.toMap(),
+      //     score: RosaScore.average(rosaScores),
+      //     photoPaths: photoPaths,
+      //   );
+      // }
       // The native side reuses the same temp filenames each run, so Flutter's
       // image cache (keyed on the file path) would otherwise show the previous
       // capture. Evict them so the new files are decoded fresh from disk.
@@ -58,6 +63,7 @@ class _StartScreenState extends State<StartScreen> {
             builder: (_) => ReviewScreen(
               photoPaths: photoPaths,
               rosaScores: rosaScores,
+              bodyAngles: bodyAngles,
             ),
           ),
         );

@@ -39,7 +39,20 @@ object RosaAnglesCalculator {
         val wristExtension: Float,  // elbow.y − wrist.y — keyboard
         val mouseReach: Float,      // |wrist.x − shoulder.x| — mouse
         val lowerBodyConfidence: LowerBodyConfidence, // reliability of kneeAngle
-    )
+    ) {
+        /// Readable summary of the measured body angles, for the Flutter review
+        /// screen. Degree-valued angles are exposed; the raw normalized offsets
+        /// (shrugGap, wristExtension, …) are internal scoring inputs and omitted.
+        fun toMap(): Map<String, Any> = hashMapOf(
+            "side"                  to if (isLeftSide) "Left" else "Right",
+            "knee_angle"            to kneeAngle.toDouble(),
+            "trunk_angle"           to trunkAngle.toDouble(),
+            "elbow_angle"           to elbowAngle.toDouble(),
+            "neck_angle"            to neckAngle.toDouble(),
+            "neck_state"            to neckState.name,
+            "lower_body_confidence" to lowerBodyConfidence.name,
+        )
+    }
 
     fun compute(lm: List<LandmarkPoint>): Angles? {
         if (lm.size < 29) return null

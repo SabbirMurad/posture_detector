@@ -44,6 +44,7 @@ class MainActivity : FlutterActivity() {
             if (resultCode == Activity.RESULT_OK && data != null) {
                 val paths      = data.getStringArrayListExtra(PoseDetectionActivity.EXTRA_PHOTO_PATHS)
                 val scoresJson = data.getStringExtra(PoseDetectionActivity.EXTRA_ROSA_SCORES)
+                val anglesJson = data.getStringExtra(PoseDetectionActivity.EXTRA_BODY_ANGLES)
                 val scores = if (!scoresJson.isNullOrEmpty()) {
                     val arr = org.json.JSONArray(scoresJson)
                     (0 until arr.length()).map { i ->
@@ -65,9 +66,25 @@ class MainActivity : FlutterActivity() {
                         )
                     }
                 } else emptyList<Map<String, Any>>()
+                val angles = if (!anglesJson.isNullOrEmpty()) {
+                    val arr = org.json.JSONArray(anglesJson)
+                    (0 until arr.length()).map { i ->
+                        val obj = arr.getJSONObject(i)
+                        hashMapOf<String, Any>(
+                            "side"                  to obj.optString("side", ""),
+                            "knee_angle"            to obj.optDouble("knee_angle", Double.NaN),
+                            "trunk_angle"           to obj.optDouble("trunk_angle", Double.NaN),
+                            "elbow_angle"           to obj.optDouble("elbow_angle", Double.NaN),
+                            "neck_angle"            to obj.optDouble("neck_angle", Double.NaN),
+                            "neck_state"            to obj.optString("neck_state", ""),
+                            "lower_body_confidence" to obj.optString("lower_body_confidence", ""),
+                        )
+                    }
+                } else emptyList<Map<String, Any>>()
                 pendingResult?.success(hashMapOf(
                     "photo_paths"  to (paths ?: arrayListOf<String>()),
                     "rosa_scores"  to scores,
+                    "body_angles"  to angles,
                 ))
             } else {
                 pendingResult?.success(null)

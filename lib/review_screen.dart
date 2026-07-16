@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:posture_detector/body_angles.dart';
 import 'package:posture_detector/image_viewer.dart';
 import 'package:posture_detector/rosa_score.dart';
 import 'package:posture_detector/success_screen.dart';
@@ -7,11 +8,13 @@ import 'package:posture_detector/success_screen.dart';
 class ReviewScreen extends StatelessWidget {
   final List<String> photoPaths;
   final List<RosaScore> rosaScores;
+  final List<BodyAngles> bodyAngles;
 
   const ReviewScreen({
     super.key,
     required this.photoPaths,
     required this.rosaScores,
+    this.bodyAngles = const [],
   });
 
   @override
@@ -49,6 +52,10 @@ class ReviewScreen extends StatelessWidget {
                   _PhotoStrip(paths: photoPaths, scoredCount: scoredCount),
                   const SizedBox(height: 16),
                   _AverageScoreCard(score: average, photoCount: scoredCount),
+                  if (bodyAngles.any((a) => a.hasData)) ...[
+                    const SizedBox(height: 16),
+                    _BodyAnglesCard(angles: bodyAngles),
+                  ],
                 ],
               ),
             ),
@@ -273,6 +280,180 @@ class _AverageScoreCard extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// Card listing the raw body angles the camera measured for each side shot.
+class _BodyAnglesCard extends StatelessWidget {
+  final List<BodyAngles> angles;
+  const _BodyAnglesCard({required this.angles});
+
+  @override
+  Widget build(BuildContext context) {
+    final measured = <MapEntry<int, BodyAngles>>[];
+    for (var i = 0; i < angles.length; i++) {
+      if (angles[i].hasData) measured.add(MapEntry(i, angles[i]));
+    }
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            color: const Color(0xFF37474F),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: const Text(
+              'Measured Body Angles',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
+            child: Column(
+              children: [
+                for (var j = 0; j < measured.length; j++) ...[
+                  if (j > 0)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Divider(height: 1),
+                    ),
+                  _PhotoAngles(
+                    photoIndex: measured[j].key,
+                    angles: measured[j].value,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 4, 14, 12),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, size: 15, color: Colors.grey[500]),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    'Angles read from the side-view captures used for scoring.',
+                    style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One side shot's angle readout: a header line plus the four ROSA angles.
+class _PhotoAngles extends StatelessWidget {
+  final int photoIndex;
+  final BodyAngles angles;
+  const _PhotoAngles({required this.photoIndex, required this.angles});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Photo ${photoIndex + 1}',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: Colors.grey[850],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.blueGrey.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '${angles.side} side',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.blueGrey[700],
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _AngleChip(label: 'Knee', value: angles.kneeAngle),
+            _AngleChip(label: 'Trunk', value: angles.trunkAngle),
+            _AngleChip(label: 'Elbow', value: angles.elbowAngle),
+            _AngleChip(label: 'Neck', value: angles.neckAngle),
+          ],
+        ),
+        if (angles.neckState.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Text(
+            'Neck posture: ${angles.neckStateLabel}',
+            style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _AngleChip extends StatelessWidget {
+  final String label;
+  final double value;
+  const _AngleChip({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    final text = value.isNaN ? '—' : '${value.round()}°';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.grey.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.withOpacity(0.30)),
+      ),
+      child: RichText(
+        text: TextSpan(
+          style: DefaultTextStyle.of(context).style,
+          children: [
+            TextSpan(
+              text: '$label  ',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            TextSpan(
+              text: text,
+              style: TextStyle(
+                fontSize: 13,
+                color: Colors.grey[900],
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
