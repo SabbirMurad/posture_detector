@@ -1316,9 +1316,21 @@ class PoseDetectionActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // Stop new frames on the main thread, then free the native TFLite /
+        // MediaPipe resources on the camera executor so the closes are serialized
+        // after any in-flight frame analysis. Closing them directly on the main
+        // thread races with inference still running on the executor and crashes in
+        // native code (SIGSEGV in libtensorflowlite_jni when the interpreter is
+        // freed mid-run — e.g. when the user swipes back during capture).
+        cameraProvider?.unbindAll()
+        cameraExecutor.execute {
+            poseLandmarker?.close()
+            poseLandmarker = null
+            handLandmarker?.close()
+            handLandmarker = null
+            yoloDetector?.dispose()
+            yoloDetector = null
+        }
         cameraExecutor.shutdown()
-        poseLandmarker?.close()
-        handLandmarker?.close()
-        yoloDetector?.dispose()
     }
 }

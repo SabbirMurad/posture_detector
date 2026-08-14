@@ -10,11 +10,17 @@ class ReviewScreen extends StatelessWidget {
   final List<RosaScore> rosaScores;
   final List<BodyAngles> bodyAngles;
 
+  /// Front-view derived angles (degrees). Null when no front shot was captured.
+  final double? frontAbductionAngle;
+  final double? frontWristDeviationAngle;
+
   const ReviewScreen({
     super.key,
     required this.photoPaths,
     required this.rosaScores,
     this.bodyAngles = const [],
+    this.frontAbductionAngle,
+    this.frontWristDeviationAngle,
   });
 
   @override
@@ -52,9 +58,15 @@ class ReviewScreen extends StatelessWidget {
                   _PhotoStrip(paths: photoPaths, scoredCount: scoredCount),
                   const SizedBox(height: 16),
                   _AverageScoreCard(score: average, photoCount: scoredCount),
-                  if (bodyAngles.any((a) => a.hasData)) ...[
+                  if (bodyAngles.any((a) => a.hasData) ||
+                      frontAbductionAngle != null ||
+                      frontWristDeviationAngle != null) ...[
                     const SizedBox(height: 16),
-                    _BodyAnglesCard(angles: bodyAngles),
+                    _BodyAnglesCard(
+                      angles: bodyAngles,
+                      frontAbductionAngle: frontAbductionAngle,
+                      frontWristDeviationAngle: frontWristDeviationAngle,
+                    ),
                   ],
                 ],
               ),
@@ -288,7 +300,13 @@ class _AverageScoreCard extends StatelessWidget {
 /// Card listing the raw body angles the camera measured for each side shot.
 class _BodyAnglesCard extends StatelessWidget {
   final List<BodyAngles> angles;
-  const _BodyAnglesCard({required this.angles});
+  final double? frontAbductionAngle;
+  final double? frontWristDeviationAngle;
+  const _BodyAnglesCard({
+    required this.angles,
+    this.frontAbductionAngle,
+    this.frontWristDeviationAngle,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -296,6 +314,8 @@ class _BodyAnglesCard extends StatelessWidget {
     for (var i = 0; i < angles.length; i++) {
       if (angles[i].hasData) measured.add(MapEntry(i, angles[i]));
     }
+    final hasFront =
+        frontAbductionAngle != null || frontWristDeviationAngle != null;
 
     return Card(
       elevation: 2,
@@ -331,6 +351,17 @@ class _BodyAnglesCard extends StatelessWidget {
                     angles: measured[j].value,
                   ),
                 ],
+                if (hasFront) ...[
+                  if (measured.isNotEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Divider(height: 1),
+                    ),
+                  _FrontAngles(
+                    abductionAngle: frontAbductionAngle,
+                    wristDeviationAngle: frontWristDeviationAngle,
+                  ),
+                ],
               ],
             ),
           ),
@@ -351,6 +382,49 @@ class _BodyAnglesCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Front-view derived angles: elbow abduction and wrist deviation.
+class _FrontAngles extends StatelessWidget {
+  final double? abductionAngle;
+  final double? wristDeviationAngle;
+  const _FrontAngles({this.abductionAngle, this.wristDeviationAngle});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Front view',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: Colors.grey[850],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _AngleChip(
+              label: 'Elbow abduction',
+              value: abductionAngle ?? double.nan,
+            ),
+            _AngleChip(
+              label: 'Wrist deviation',
+              value: wristDeviationAngle ?? double.nan,
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

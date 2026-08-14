@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-// import 'package:posture_detector/assessment_database.dart'; // DISABLED: SQLite persistence
+import 'package:posture_detector/assessment_database.dart';
 import 'package:posture_detector/body_angles.dart';
 import 'package:posture_detector/review_screen.dart';
 import 'package:posture_detector/rosa_score.dart';
@@ -31,24 +31,46 @@ class _StartScreenState extends State<StartScreen> {
       final result = await _channel.invokeMethod<Map>('startDetection', answers.toMap());
       if (!mounted) return;
       if (result == null) return;
-      final photoPaths = List<String>.from(result['photo_paths'] as List? ?? []);
-      final rosaScores = (result['rosa_scores'] as List? ?? [])
-          .map((e) => RosaScore.fromMap(Map<String, dynamic>.from(e as Map)))
+
+      // Native emits a grouped contract:
+      //   { side_captures: [ {image_path, rosa_score, body_angles} ... ],
+      //     front_capture: {image_path, abduction_angle, wrist_deviation_angle} }
+      final sideCaptures = (result['side_captures'] as List? ?? const [])
+          .map((e) => Map<String, dynamic>.from(e as Map))
           .toList();
-      final bodyAngles = (result['body_angles'] as List? ?? [])
-          .map((e) => BodyAngles.fromMap(Map<String, dynamic>.from(e as Map)))
+      final frontCapture = result['front_capture'] == null
+          ? null
+          : Map<String, dynamic>.from(result['front_capture'] as Map);
+
+      // Photo strip = the side shots in order, then the front shot last.
+      final photoPaths = <String>[
+        for (final c in sideCaptures)
+          if (c['image_path'] is String) c['image_path'] as String,
+        if (frontCapture?['image_path'] is String)
+          frontCapture!['image_path'] as String,
+      ];
+      final rosaScores = sideCaptures
+          .map((c) => RosaScore.fromMap(
+              Map<String, dynamic>.from((c['rosa_score'] as Map?) ?? const {})))
           .toList();
+      final bodyAngles = sideCaptures
+          .map((c) => BodyAngles.fromMap(
+              Map<String, dynamic>.from((c['body_angles'] as Map?) ?? const {})))
+          .toList();
+      final frontAbductionAngle = (frontCapture?['abduction_angle'] as num?)?.toDouble();
+      final frontWristDeviationAngle =
+          (frontCapture?['wrist_deviation_angle'] as num?)?.toDouble();
 
       // DISABLED: persisting the completed assessment (questionnaire answers +
       // averaged score + photos) to SQLite. Paired with the disabled history
       // export on the success screen — re-enable both together.
-      // if (rosaScores.isNotEmpty) {
-      //   await AssessmentDatabase.instance.saveAssessment(
-      //     answers: answers.toMap(),
-      //     score: RosaScore.average(rosaScores),
-      //     photoPaths: photoPaths,
-      //   );
-      // }
+      if (rosaScores.isNotEmpty) {
+        await AssessmentDatabase.instance.saveAssessment(
+          answers: answers.toMap(),
+          score: RosaScore.average(rosaScores),
+          photoPaths: photoPaths,
+        );
+      }
       // The native side reuses the same temp filenames each run, so Flutter's
       // image cache (keyed on the file path) would otherwise show the previous
       // capture. Evict them so the new files are decoded fresh from disk.
@@ -64,6 +86,8 @@ class _StartScreenState extends State<StartScreen> {
               photoPaths: photoPaths,
               rosaScores: rosaScores,
               bodyAngles: bodyAngles,
+              frontAbductionAngle: frontAbductionAngle,
+              frontWristDeviationAngle: frontWristDeviationAngle,
             ),
           ),
         );
